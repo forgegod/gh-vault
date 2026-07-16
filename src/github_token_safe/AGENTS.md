@@ -14,7 +14,7 @@ Production package for storing named GitHub tokens through `pass`, selecting an 
 
 ## Local Contracts
 
-- `gts` and `github-token-safe` both enter `github_token_safe.cli:main` as configured in `pyproject.toml`.
+- `github-token-safe` is the only console command and enters `github_token_safe.cli:main` as configured in `pyproject.toml`; do not add acronym aliases that collide with common shell tooling.
 - Profile names are 1–64 characters and contain only letters, digits, `.`, `_`, or `-`; the first character is alphanumeric.
 - `--scopes` metadata is operator-declared, trimmed, order-preserving, and deduplicated. It is not presented as GitHub-verified.
 - Token values are non-empty single lines stored only through `pass` under `github-token-safe/<profile>` in `${PASSWORD_STORE_DIR:-~/.password-store}`; `TokenStore` passes that location explicitly to the backend.

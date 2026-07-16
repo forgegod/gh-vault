@@ -26,7 +26,7 @@ def parse_scopes(value: str) -> tuple[str, ...]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gts",
+        prog="github-token-safe",
         description="Store named GitHub tokens and switch between them safely.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

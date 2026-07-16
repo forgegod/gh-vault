@@ -39,6 +39,10 @@ def test_parse_scopes_trims_and_deduplicates() -> None:
     assert cli.parse_scopes("repo, workflow,repo,") == ("repo", "workflow")
 
 
+def test_parser_uses_public_command_name() -> None:
+    assert cli.build_parser().prog == "github-token-safe"
+
+
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli._list(MemoryStore()) == 0  # type: ignore[arg-type]
     output = capsys.readouterr().out

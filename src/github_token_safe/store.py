@@ -30,13 +30,22 @@ class Profile:
 
 
 class TokenStore:
-    def __init__(self, config_dir: Path | None = None, pass_tool: str | None = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path | None = None,
+        pass_tool: str | None = None,
+        password_store_dir: Path | None = None,
+    ) -> None:
         base = config_dir or Path(
             os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
         ) / STORE_PREFIX
         self.config_dir = Path(base)
         self.config_file = self.config_dir / "config.json"
         self.pass_tool = pass_tool or shutil.which("pass") or ""
+        self.password_store_dir = Path(
+            password_store_dir
+            or os.environ.get("PASSWORD_STORE_DIR", Path.home() / ".password-store")
+        ).expanduser()
 
     def require_backend(self) -> None:
         if not self.pass_tool:
@@ -95,7 +104,12 @@ class TokenStore:
             raise StoreError("token must be a non-empty single line")
         command = [self.pass_tool, "insert", "--force", "--multiline", self._entry(profile.name)]
         result = subprocess.run(
-            command, input=f"{token}\n", text=True, capture_output=True, check=False
+            command,
+            input=f"{token}\n",
+            text=True,
+            capture_output=True,
+            check=False,
+            env=self._backend_environment(),
         )
         if result.returncode != 0:
             raise StoreError(self._backend_error("store", result))
@@ -117,6 +131,7 @@ class TokenStore:
             text=True,
             capture_output=True,
             check=False,
+            env=self._backend_environment(),
         )
         token = result.stdout.rstrip("\n")
         if result.returncode != 0 or not token:
@@ -140,6 +155,7 @@ class TokenStore:
             text=True,
             capture_output=True,
             check=False,
+            env=self._backend_environment(),
         )
         if result.returncode != 0:
             raise StoreError(self._backend_error(f"remove profile '{name}'", result))
@@ -156,3 +172,8 @@ class TokenStore:
     @staticmethod
     def _entry(name: str) -> str:
         return f"{STORE_PREFIX}/{name}"
+
+    def _backend_environment(self) -> dict[str, str]:
+        environment = os.environ.copy()
+        environment["PASSWORD_STORE_DIR"] = str(self.password_store_dir)
+        return environment

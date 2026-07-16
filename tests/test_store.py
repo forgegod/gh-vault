@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 path = Path(os.environ["FAKE_SECRET_DB"])
+password_store_dir = Path(os.environ["PASSWORD_STORE_DIR"])
+assert path.parent == password_store_dir
 data = json.loads(path.read_text()) if path.exists() else {}
 command = sys.argv[1]
 key = sys.argv[-1]
@@ -48,8 +50,14 @@ else:
 
 @pytest.fixture
 def store(tmp_path: Path, backend: Path, monkeypatch: pytest.MonkeyPatch) -> TokenStore:
-    monkeypatch.setenv("FAKE_SECRET_DB", str(tmp_path / "secrets.json"))
-    return TokenStore(config_dir=tmp_path / "config", pass_tool=str(backend))
+    password_store_dir = tmp_path / "password-store"
+    password_store_dir.mkdir()
+    monkeypatch.setenv("FAKE_SECRET_DB", str(password_store_dir / "secrets.json"))
+    return TokenStore(
+        config_dir=tmp_path / "config",
+        pass_tool=str(backend),
+        password_store_dir=password_store_dir,
+    )
 
 
 def test_add_select_get_and_remove(store: TokenStore) -> None:
@@ -73,6 +81,17 @@ def test_config_permissions_are_restrictive(store: TokenStore) -> None:
     assert stat.S_IMODE(store.config_file.stat().st_mode) == 0o600
     config = json.loads(store.config_file.read_text(encoding="utf-8"))
     assert "github_pat_value" not in json.dumps(config)
+
+
+def test_default_password_store_is_in_the_user_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.delenv("PASSWORD_STORE_DIR", raising=False)
+
+    store = TokenStore(config_dir=tmp_path / "config", pass_tool="pass")
+
+    assert store.password_store_dir == tmp_path / "home" / ".password-store"
 
 
 def test_replace_requires_force(store: TokenStore) -> None:

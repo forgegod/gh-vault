@@ -15,15 +15,17 @@ gpg --full-generate-key
 pass init YOUR_GPG_KEY_ID
 ```
 
-If you already use `pass`, keep the existing initialization. `gts` stores entries below `github-token-safe/` and deliberately does not fall back to plaintext token files.
+If you already use `pass`, keep the existing initialization. `gts` stores entries below `github-token-safe/` in `${PASSWORD_STORE_DIR:-~/.password-store}` and deliberately does not fall back to plaintext token files.
 
 ## Install
 
+Install the command from a development checkout into an isolated user tool environment:
+
 ```sh
-python3 -m pip install --user .
+uv tool install --editable .
 ```
 
-For an isolated install, use `pipx install .`.
+Run this from the repository root. The editable install makes source changes available without reinstalling. `uv` keeps the command environment outside the checkout; if `gts` is not on `PATH`, run `uv tool update-shell` once and start a new shell.
 
 ## Use
 
@@ -85,7 +87,8 @@ Or configure it globally by adding `--global`. The helper responds only for HTTP
 
 ## Security model
 
-- Tokens are GPG-encrypted by `pass` below `github-token-safe/` in the password store.
+- Tokens are GPG-encrypted by `pass` below `github-token-safe/` in `${PASSWORD_STORE_DIR:-~/.password-store}`. The password store is outside the development checkout unless you explicitly override `PASSWORD_STORE_DIR` to point there.
 - Metadata is stored at `${XDG_CONFIG_HOME:-~/.config}/github-token-safe/config.json` with mode `0600`.
+- Neither token values nor profile metadata are stored in the development checkout.
 - Tokens are passed to child commands through environment variables. A same-user process with sufficient inspection rights may read another process's environment; this is also how `gh` consumes `GH_TOKEN`.
 - `gts` does not write token values to config files, logs, or command arguments. The only stdout exception is the strict response expected when Git invokes `gts git-credential get`.

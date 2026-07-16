@@ -127,7 +127,12 @@ def _git_credential(store: TokenStore, operation: str) -> int:
         key, separator, value = line.partition("=")
         if separator:
             fields[key] = value
-    if operation != "get" or _credential_host(fields) != "github.com":
+    protocol = fields.get("protocol", "").lower()
+    if (
+        operation != "get"
+        or protocol != "https"
+        or _credential_host(fields) != "github.com"
+    ):
         return 0
     token = store.get()
     print("username=x-access-token")
@@ -170,7 +175,6 @@ def main() -> int:
         return dispatch(args, TokenStore())
     except StoreError as exc:
         parser.error(str(exc))
-    return 2
 
 
 if __name__ == "__main__":

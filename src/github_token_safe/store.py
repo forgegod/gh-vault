@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,10 +50,10 @@ class TokenStore:
         return self.pass_tool
 
     def load(self) -> dict[str, Any]:
-        if not self.config_file.exists():
-            return {"active": None, "profiles": {}}
         try:
             data = json.loads(self.config_file.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {"active": None, "profiles": {}}
         except (OSError, json.JSONDecodeError) as exc:
             raise StoreError(f"cannot read {self.config_file}: {exc}") from exc
         if not isinstance(data.get("profiles"), dict):
@@ -70,10 +69,12 @@ class TokenStore:
         fd = os.open(temporary, flags, 0o600)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                os.fchmod(handle.fileno(), 0o600)
                 json.dump(data, handle, indent=2, sort_keys=True)
                 handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, self.config_file)
-            os.chmod(self.config_file, stat.S_IRUSR | stat.S_IWUSR)
         finally:
             if temporary.exists():
                 temporary.unlink()
@@ -144,7 +145,7 @@ class TokenStore:
             raise StoreError(self._backend_error(f"remove profile '{name}'", result))
         del data["profiles"][name]
         if data["active"] == name:
-            data["active"] = next(iter(sorted(data["profiles"])), None)
+            data["active"] = None
         self.save(data)
 
     @staticmethod

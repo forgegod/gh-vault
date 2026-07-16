@@ -62,7 +62,7 @@ def test_add_select_get_and_remove(store: TokenStore) -> None:
     assert store.get() == "github_pat_write"
 
     store.remove("release")
-    assert store.active() == "repo-read"
+    assert store.active() is None
     assert [profile.name for profile in store.profiles()] == ["repo-read"]
 
 

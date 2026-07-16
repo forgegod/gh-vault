@@ -77,7 +77,7 @@ To make HTTPS Git operations use the active profile in this repository:
 git config credential.https://github.com.helper '!gts git-credential'
 ```
 
-Or configure it globally by adding `--global`. The helper responds only for `github.com`; it does not persist credentials supplied by Git.
+Or configure it globally by adding `--global`. The helper responds only for HTTPS requests to `github.com`; it does not persist credentials supplied by Git. Removing the active profile leaves no profile active rather than selecting another token implicitly.
 
 ## Scope labels
 

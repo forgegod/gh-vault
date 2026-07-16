@@ -58,6 +58,10 @@ def test_git_credential_returns_selected_token_only_for_github(
     assert cli._git_credential(MemoryStore(), "get") == 0  # type: ignore[arg-type]
     assert capsys.readouterr().out == ""
 
+    monkeypatch.setattr("sys.stdin", io.StringIO("protocol=http\nhost=github.com\n\n"))
+    assert cli._git_credential(MemoryStore(), "get") == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == ""
+
 
 def test_run_executes_with_both_supported_environment_variables(
     monkeypatch: pytest.MonkeyPatch,

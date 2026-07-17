@@ -4,7 +4,7 @@ import base64
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .envfiles import _write_private, parse_dotenv, project_namespace, render_template
@@ -13,6 +13,7 @@ from .store import StoreError
 RESERVED = re.compile(r"^(?:GITHUB_|RUNNER_|CI$|GH_TOKEN$)")
 REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
 DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+DOTENV_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,8 @@ class ActionValue:
     name: str
     kind: str
     value: str
+    source: Path | None = field(default=None, compare=False)
+    line: int | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,11 @@ class SyncResult:
 
 def action_values(env_file: Path) -> list[ActionValue]:
     entries: list[ActionValue] = []
+    locations = {
+        match["key"]: number
+        for number, line in enumerate(env_file.read_text(encoding="utf-8").splitlines(), 1)
+        if (match := DOTENV_ASSIGNMENT.match(line))
+    }
     for key, value in parse_dotenv(env_file).items():
         if key.startswith("GH_SECRET_"):
             name, kind = key.removeprefix("GH_SECRET_"), "secret"
@@ -48,7 +56,7 @@ def action_values(env_file: Path) -> list[ActionValue]:
         else:
             continue
         if name and value and not RESERVED.fullmatch(name):
-            entries.append(ActionValue(name, kind, value))
+            entries.append(ActionValue(name, kind, value, env_file, locations.get(key)))
     return entries
 
 
@@ -164,24 +172,52 @@ def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) 
     return len(grouped["secret"]), len(grouped["var"])
 
 
-def check_workflows(directory: Path, entries: list[ActionValue]) -> dict[str, list[str]]:
+def _finding(path: Path, line: int, severity: str, name: str, message: str) -> dict[str, str | int]:
+    return {"file": path.name, "line": line, "severity": severity, "name": name, "message": message}
+
+
+def check_workflows(directory: Path, entries: list[ActionValue]) -> dict[str, list[dict[str, str | int]]]:
     workflow_dir = directory / ".github" / "workflows"
     if not workflow_dir.is_dir():
         raise StoreError(f"workflow directory not found: {workflow_dir}")
     refs: dict[str, set[str]] = {}
-    order: list[str] = []
+    locations: dict[str, list[tuple[Path, int, str]]] = {}
+    defaulted: set[str] = set()
+    order: list[dict[str, str | int]] = []
     for path in sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml"))):
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            found = [(match["name"], match["kind"]) for match in REF.finditer(line)]
+            found: list[tuple[str, str]] = []
+            for expression in re.finditer(r"\$\{\{(?P<body>.*?)\}\}", line):
+                body = expression["body"]
+                for match in REF.finditer(body):
+                    found.append((match["name"], match["kind"]))
+                    locations.setdefault(match["name"], []).append((path, number, match["kind"]))
+                    fallback = body[match.end() :].rsplit("||", 1)
+                    if len(fallback) == 2 and not REF.search(fallback[1]):
+                        defaulted.add(match["name"])
             for name, kind in found:
                 refs.setdefault(name, set()).add(kind)
             kinds = [kind for _, kind in found]
             if "secrets" in kinds and "vars" in kinds and kinds.index("vars") < kinds.index("secrets"):
-                order.append(f"{path.name}:{number}")
+                order.append(_finding(path, number, "error", found[0][0], "reference secrets before vars in a fallback expression"))
     local = {entry.name: entry.kind for entry in entries}
-    unreferenced = sorted(name for name in local if name not in refs)
-    mismatch = sorted(name for name, kind in local.items() if name in refs and len(refs[name]) == 1 and ({"secret": "secrets", "var": "vars"}[kind] not in refs[name]))
-    orphan = sorted(name for name in refs if name not in local)
+    unreferenced = [
+        _finding(entry.source or Path(".env"), entry.line or 1, "warning", entry.name, f"GH_{entry.kind.upper()}_{entry.name} is declared locally but not referenced by a workflow")
+        for entry in entries
+        if entry.name not in refs
+    ]
+    mismatch = [
+        _finding(path, number, "error", name, f"{kind}.{name} is referenced but .env declares GH_{local[name].upper()}_{name}")
+        for name, kinds in refs.items()
+        if name in local and len(kinds) == 1 and ({"secret": "secrets", "var": "vars"}[local[name]] not in kinds)
+        for path, number, kind in locations[name]
+    ]
+    orphan = [
+        _finding(path, number, "warning", name, f"{kind}.{name} is not declared locally and has no fallback default")
+        for name, usages in locations.items()
+        if name not in local and name not in defaulted and not RESERVED.match(name)
+        for path, number, kind in usages
+    ]
     return {"unreferenced": unreferenced, "type_mismatch": mismatch, "order": order, "orphan": orphan}
 
 
@@ -194,5 +230,5 @@ def default_repo(directory: Path) -> str:
     return namespace
 
 
-def json_result(result: dict[str, list[str]]) -> str:
+def json_result(result: dict[str, list[dict[str, str | int]]]) -> str:
     return json.dumps(result, indent=2, sort_keys=True)

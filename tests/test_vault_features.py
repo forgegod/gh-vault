@@ -149,6 +149,29 @@ def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     assert check_workflows(tmp_path, entries) == {"unreferenced": [], "type_mismatch": [], "order": [], "orphan": []}
 
 
+def test_workflow_check_omits_defaulted_and_github_orphans(tmp_path: Path) -> None:
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "check.yml").write_text(
+        "env:\n"
+        "  DEFAULTED: ${{ vars.DEFAULTED || 'fallback' }}\n"
+        "  CHAINED: ${{ secrets.CHAINED || vars.CHAINED || 'fallback' }}\n"
+        "  GITHUB: ${{ secrets.GITHUB_TOKEN }}\n"
+        "  RUNNER: ${{ vars.RUNNER_OS }}\n"
+        "  CI: ${{ vars.CI }}\n"
+        "  GH: ${{ secrets.GH_TOKEN }}\n"
+        "  REQUIRED: ${{ secrets.REQUIRED }}\n",
+        encoding="utf-8",
+    )
+
+    assert check_workflows(tmp_path, []) == {
+        "unreferenced": [],
+        "type_mismatch": [],
+        "order": [],
+        "orphan": [{"file": "check.yml", "line": 8, "severity": "warning", "name": "REQUIRED", "message": "secrets.REQUIRED is not declared locally and has no fallback default"}],
+    }
+
+
 def test_import_variables_preserves_existing_values_without_force(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
     env.write_text("# Deployment\nGH_VAR_REGION=local\nOTHER=value\n", encoding="utf-8")

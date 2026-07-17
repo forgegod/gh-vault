@@ -161,9 +161,12 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     result = check_workflows(directory, entries)
     if args.json: print(json_result(result))
     else:
-        for category, names in result.items():
-            if names: print(f"{category}: {', '.join(names)}")
-        if args.fix and result["unreferenced"]: print("Suggested env block:\n" + suggested_env([entry for entry in entries if entry.name in result["unreferenced"]]))
+        for findings in result.values():
+            for finding in findings:
+                print(f"{finding['file']}:{finding['line']}: {finding['severity']}: {finding['message']}")
+        if args.fix and result["unreferenced"]:
+            unreferenced = {str(finding["name"]) for finding in result["unreferenced"]}
+            print("Suggested env block:\n" + suggested_env([entry for entry in entries if entry.name in unreferenced]))
     return 1 if any(result[key] for key in ("unreferenced", "type_mismatch", "order")) else 0
 
 

@@ -149,6 +149,28 @@ def test_sync_dry_run_reports_prune_count(monkeypatch: pytest.MonkeyPatch, capsy
     assert capsys.readouterr().out == "Would sync 1 entry(s); would prune 2 remote value(s).\n"
 
 
+def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["workflow", "check"])
+    monkeypatch.setattr(cli, "action_values", lambda path: [])
+    monkeypatch.setattr(
+        cli,
+        "check_workflows",
+        lambda *args: {
+            "unreferenced": [{"file": ".env", "line": 4, "severity": "warning", "name": "LOCAL", "message": "GH_VAR_LOCAL is declared locally but not referenced by a workflow"}],
+            "type_mismatch": [{"file": "export.yml", "line": 12, "severity": "error", "name": "REGION", "message": "secrets.REGION is referenced but .env declares GH_VAR_REGION"}],
+            "order": [],
+            "orphan": [{"file": "export.yml", "line": 13, "severity": "warning", "name": "OPTIONAL", "message": "vars.OPTIONAL is not declared locally and has no fallback default"}],
+        },
+    )
+
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out.splitlines() == [
+        ".env:4: warning: GH_VAR_LOCAL is declared locally but not referenced by a workflow",
+        "export.yml:12: error: secrets.REGION is referenced but .env declares GH_VAR_REGION",
+        "export.yml:13: warning: vars.OPTIONAL is not declared locally and has no fallback default",
+    ]
+
+
 def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secrets", "check"])
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus(["API_KEY"], [], [], [], [], []))

@@ -86,7 +86,7 @@ class VaultStore:
     def put(self, profile: Profile, token: str, *, replace: bool = False) -> None:
         data = self.load()
         if profile.name in data["profiles"] and not replace:
-            raise StoreError(f"profile '{profile.name}' already exists; use --force to replace it")
+            raise StoreError(f"profile '{profile.name}' already exists")
         if not token or "\n" in token or "\r" in token:
             raise StoreError("token must be a non-empty single line")
         self.put_secret(profile.name, token)
@@ -98,7 +98,7 @@ class VaultStore:
     def get(self, name: str | None = None) -> str:
         selected = name or self.active()
         if not selected:
-            raise StoreError("no active profile; add or activate one first")
+            raise StoreError("no active profile; set or activate one first")
         if selected not in self.load()["profiles"]:
             raise StoreError(f"unknown profile: {selected}")
         try:

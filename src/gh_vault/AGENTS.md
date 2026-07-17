@@ -20,10 +20,11 @@ Production package for storing named GitHub tokens and project environment archi
 
 - `gh-vault` is the only console command and enters `gh_vault.cli:main`; do not add aliases that collide with shell tooling.
 - Profile names are 1–64 characters and contain only letters, digits, `.`, `_`, or `-`; the first character is alphanumeric.
-- `add` validates a token with GitHub, prints its discovered scopes and available expiration without printing the token, and discovers classic-PAT scopes when `--scopes` is absent; explicit `--scopes` is trimmed, order-preserving, and deduplicated. GitHub-provided token expiration metadata is stored when available.
+- `set` always creates or replaces the named profile.
+- `set` validates a token with GitHub, prints its discovered scopes and available expiration without printing the token, and discovers classic-PAT scopes when `--scopes` is absent; explicit `--scopes` is trimmed, order-preserving, and deduplicated. GitHub-provided token expiration metadata is stored when available.
 - Token values are non-empty single lines stored only through `pass` under `gh-vault/<profile>` in `${PASSWORD_STORE_DIR:-~/.password-store}`; archive data also stays below that namespace.
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
-- The first added profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
+- The first set profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
 - `run` sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the exec'd child environment and does not mutate the invoking shell.
 - `git-credential get` responds only to HTTPS requests for `github.com`. `store` and `erase` are no-ops, and token output is limited to Git's exact credential response.
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.

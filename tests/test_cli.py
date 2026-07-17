@@ -45,10 +45,15 @@ def test_parser_uses_public_command_name() -> None:
     assert cli.build_parser().prog == "gh-vault"
 
 
+def test_add_command_is_removed() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.build_parser().parse_args(["add", "release"])
+
+
 @pytest.mark.parametrize(
     ("arguments", "description"),
     [
-        (["add", "--help"], "Validate and store a named GitHub token profile"),
+        (["set", "--help"], "Validate a GitHub token and create or replace its named profile"),
         (["list", "--help"], "Display stored token profiles"),
         (["activate", "--help"], "Select the token profile"),
         (["status", "--help"], "Show the profile selected"),
@@ -71,8 +76,8 @@ def test_subtool_help_explains_its_operation(arguments: list[str], description: 
     assert description in capsys.readouterr().out
 
 
-def test_add_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["add", "release", "--stdin"])
+def test_set_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["set", "release", "--stdin"])
     store = MemoryStore()
     captured: dict[str, object] = {}
 
@@ -84,13 +89,13 @@ def test_add_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, ca
     assert captured == {
         "profile": Profile("release", ("repo", "workflow"), "", "2026-12-31 23:59:59 UTC"),
         "token": "token-value",
-        "replace": False,
+        "replace": True,
     }
     assert capsys.readouterr().out == "Validated GitHub token: scopes=repo,workflow expires=2026-12-31 23:59:59 UTC\nStored profile: release\n"
 
 
-def test_add_preserves_expiration_with_manual_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
-    args = cli.build_parser().parse_args(["add", "release", "--stdin", "--scopes", "read:org"])
+def test_set_preserves_expiration_with_manual_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["set", "release", "--stdin", "--scopes", "read:org"])
     store = MemoryStore()
     captured: dict[str, Profile] = {}
 
@@ -102,8 +107,8 @@ def test_add_preserves_expiration_with_manual_scopes(monkeypatch: pytest.MonkeyP
     assert captured["profile"] == Profile("release", ("read:org",), "", "2026-12-31 23:59:59 UTC")
 
 
-def test_add_with_manual_scopes_allows_unavailable_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
-    args = cli.build_parser().parse_args(["add", "release", "--stdin", "--scopes", "read:org"])
+def test_set_with_manual_scopes_allows_unavailable_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["set", "release", "--stdin", "--scopes", "read:org"])
     store = MemoryStore()
     captured: dict[str, Profile] = {}
 

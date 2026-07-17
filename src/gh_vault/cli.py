@@ -29,8 +29,8 @@ def parse_scopes(value: str) -> tuple[str, ...]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gh-vault", description="Store GitHub credentials and project environment archives safely.")
     commands = parser.add_subparsers(dest="command", required=True)
-    add = commands.add_parser("add", help="store a named token", description="Validate and store a named GitHub token profile in the encrypted vault.")
-    add.add_argument("name", type=profile_name, help="profile name"); add.add_argument("--scopes", type=parse_scopes, help="comma-separated scopes; disables automatic classic-PAT detection"); add.add_argument("--note", default="", help="operator note"); add.add_argument("--stdin", action="store_true", help="read the token from standard input"); add.add_argument("--force", action="store_true", help="replace an existing profile")
+    set_profile = commands.add_parser("set", help="create or replace a profile", description="Validate a GitHub token and create or replace its named profile in the encrypted vault.")
+    set_profile.add_argument("name", type=profile_name, help="profile name"); set_profile.add_argument("--scopes", type=parse_scopes, help="comma-separated scopes; disables automatic classic-PAT detection"); set_profile.add_argument("--note", default="", help="operator note"); set_profile.add_argument("--stdin", action="store_true", help="read the token from standard input"); set_profile.set_defaults(force=True)
     commands.add_parser("list", help="list token profiles", description="Display stored token profiles, their scopes, expiration, and active selection.")
     activate = commands.add_parser("activate", help="select the default profile", description="Select the token profile used when a command does not name one."); activate.add_argument("name", type=profile_name, help="profile name")
     commands.add_parser("status", help="show the active profile", description="Show the profile selected as the default GitHub token.")
@@ -61,7 +61,7 @@ def _read_token(use_stdin: bool) -> str:
     return getpass.getpass("GitHub token: ")
 
 
-def _add(store: VaultStore, args: argparse.Namespace) -> int:
+def _set(store: VaultStore, args: argparse.Namespace) -> int:
     token = _read_token(args.stdin)
     validated = True
     try:
@@ -115,7 +115,7 @@ def _git_credential(store: VaultStore, operation: str) -> int:
 
 
 def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path.cwd()) -> int:
-    if args.command == "add": return _add(store, args)
+    if args.command == "set": return _set(store, args)
     if args.command == "list": return _list(store)
     if args.command == "activate": store.activate(args.name); print(f"Active profile: {args.name}"); return 0
     if args.command == "status": return _status(store)

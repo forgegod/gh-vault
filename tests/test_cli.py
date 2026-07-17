@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from gh_vault import cli
-from gh_vault.actions import RemoteValueStatus
+from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult
 from gh_vault.github import TokenMetadata
 from gh_vault.store import Profile, StoreError
 
@@ -102,6 +102,20 @@ def test_parser_accepts_variable_import_and_secret_check_commands() -> None:
     assert args.variables_command == "import"
     assert args.force is True
     assert cli.build_parser().parse_args(["secrets", "check"]).secrets_command == "check"
+
+
+def test_sync_rejects_prune_with_type_migration() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.build_parser().parse_args(["secrets", "sync", "--prune", "--migrate-types"])
+
+
+def test_sync_dry_run_reports_prune_count(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secrets", "sync", "--dry-run", "--prune"])
+    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "value")])
+    monkeypatch.setattr(cli, "sync", lambda *args: SyncResult(1, 2))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "Would sync 1 entry(s); would prune 2 remote value(s).\n"
 
 
 def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

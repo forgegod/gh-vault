@@ -43,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         command = env.add_parser(name); command.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); command.add_argument("--example-file", type=Path, default=Path(".env.example"), help="environment template path")
     env.choices["restore"].add_argument("--force", action="store_true", help="overwrite an existing environment file"); env.choices["restore"].add_argument("--restore-example", action="store_true", help="restore the archived template")
     secrets = commands.add_parser("secrets", help="sync or export GH_SECRET_/GH_VAR_ entries").add_subparsers(dest="secrets_command", required=True)
-    sync_parser = secrets.add_parser("sync", help="sync local Actions values"); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); sync_parser.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync")
+    sync_parser = secrets.add_parser("sync", help="sync local Actions values"); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
     act = secrets.add_parser("export-act", help="export local values for act"); act.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); act.add_argument("--output", type=Path, default=Path(".secrets"), help="output path for secrets"); act.add_argument("--var-output", type=Path, default=Path(".vars"), help="output path for variables")
     secret_check = secrets.add_parser("check", help="verify local secret names exist on GitHub"); secret_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); secret_check.add_argument("--repo", help="target repository; defaults to origin")
     variables = commands.add_parser("variables", help="manage repository variables").add_subparsers(dest="variables_command", required=True)
@@ -147,7 +147,10 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
             print("All local Actions values are configured on GitHub.")
             return 0
         entries = action_values(args.env_file)
-        if args.secrets_command == "sync": print(f"{'Would sync' if args.dry_run else 'Synced'} {sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types)} entry(s).")
+        if args.secrets_command == "sync":
+            result = sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types, args.prune)
+            prune_summary = f"; {'would prune' if args.dry_run else 'pruned'} {result.pruned} remote value(s)" if args.prune else ""
+            print(f"{'Would sync' if args.dry_run else 'Synced'} {result.synced} entry(s){prune_summary}.")
         else: secret_count, var_count = export_act(entries, args.output, args.var_output); print(f"Wrote {secret_count} secret(s) and {var_count} variable(s).")
         return 0
     if args.command == "variables":

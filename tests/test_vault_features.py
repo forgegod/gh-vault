@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, RemoteValueStatus, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
+from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
@@ -228,10 +228,40 @@ def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> 
         return Result()
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
-    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", False, True) == 1
+    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", False, True) == SyncResult(1, 0)
     assert calls == [
         (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
         (["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
         (["gh", "variable", "delete", "API_KEY", "--repo", "owner/repo"], None),
         (["gh", "secret", "set", "API_KEY", "--repo", "owner/repo"], "alpha"),
+    ]
+
+
+def test_sync_prunes_only_remote_names_absent_from_env(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        input_value = kwargs.get("input")
+        calls.append((command, input_value if isinstance(input_value, str) else None))
+        if command[:3] == ["gh", "secret", "list"]:
+            return Result("CONFIGURED\nSTALE_SECRET\n")
+        if command[:3] == ["gh", "variable", "list"]:
+            return Result("CONFIGURED\nSTALE_VARIABLE\n")
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    assert sync([ActionValue("CONFIGURED", "secret", "alpha")], "owner/repo", False, prune=True) == SyncResult(1, 2)
+    assert calls == [
+        (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "secret", "remove", "STALE_SECRET", "--repo", "owner/repo"], None),
+        (["gh", "variable", "delete", "STALE_VARIABLE", "--repo", "owner/repo"], None),
+        (["gh", "secret", "set", "CONFIGURED", "--repo", "owner/repo"], "alpha"),
     ]

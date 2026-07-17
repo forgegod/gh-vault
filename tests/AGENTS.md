@@ -9,7 +9,7 @@ Deterministic pytest coverage for the CLI boundary, credential-helper filtering,
 | Item | Role |
 |---|---|
 | `test_cli.py` | Parser helpers, profile listing, Git credential output filtering, and `run` environment behavior using an in-memory store. |
-| `test_store.py` | Store lifecycle, restrictive permissions, replacement rules, token validation, missing-secret errors, and a temporary executable fake `pass` backend. |
+| `test_store.py` | Store lifecycle, legacy migration, restrictive permissions, replacement rules, token validation, missing-secret errors, and a temporary executable fake `pass` backend. |
 | `test_vault_features.py` | Project-origin namespace normalization, encrypted environment archive/restore, `act` exports, and workflow-wiring checks. |
 
 ## Local Contracts

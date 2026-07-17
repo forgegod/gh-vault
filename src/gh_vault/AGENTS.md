@@ -9,6 +9,7 @@ Production package for storing named GitHub tokens and project environment archi
 | Item | Role |
 |---|---|
 | `__init__.py` | Package identity and runtime version. |
+| `__main__.py` | Module entry point delegating to the CLI. |
 | `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config persistence, `pass` integration, legacy migration, and backend errors. |
 | `envfiles.py` | Safe dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |

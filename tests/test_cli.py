@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gh_vault import cli
+from gh_vault.github import TokenMetadata
 from gh_vault.store import Profile, StoreError
 
 
@@ -20,7 +21,7 @@ class MemoryStore:
         return self.selected
 
     def profiles(self) -> list[Profile]:
-        return [Profile("read", ("contents:read",), "safe reads"), Profile("write")]
+        return [Profile("read", ("contents:read",), "safe reads", "2026-12-31 23:59:59 UTC"), Profile("write")]
 
     def get(self, name: str | None = None) -> str:
         return self.items[name or self.selected]
@@ -41,6 +42,53 @@ def test_parse_scopes_trims_and_deduplicates() -> None:
 
 def test_parser_uses_public_command_name() -> None:
     assert cli.build_parser().prog == "gh-vault"
+
+
+def test_add_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["add", "release", "--stdin"])
+    store = MemoryStore()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "_read_token", lambda use_stdin: "token-value")
+    monkeypatch.setattr(cli, "inspect_token", lambda token: TokenMetadata(("repo", "workflow"), "2026-12-31 23:59:59 UTC"))
+    monkeypatch.setattr(store, "put", lambda profile, token, replace: captured.update(profile=profile, token=token, replace=replace), raising=False)
+
+    assert cli.dispatch(args, store) == 0  # type: ignore[arg-type]
+    assert captured == {
+        "profile": Profile("release", ("repo", "workflow"), "", "2026-12-31 23:59:59 UTC"),
+        "token": "token-value",
+        "replace": False,
+    }
+    assert capsys.readouterr().out == "Stored profile: release\n"
+
+
+def test_add_preserves_expiration_with_manual_scopes(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["add", "release", "--stdin", "--scopes", "read:org"])
+    store = MemoryStore()
+    captured: dict[str, Profile] = {}
+
+    monkeypatch.setattr(cli, "_read_token", lambda use_stdin: "token-value")
+    monkeypatch.setattr(cli, "inspect_token", lambda token: TokenMetadata(("repo",), "2026-12-31 23:59:59 UTC"))
+    monkeypatch.setattr(store, "put", lambda profile, token, replace: captured.update(profile=profile), raising=False)
+
+    assert cli.dispatch(args, store) == 0  # type: ignore[arg-type]
+    assert captured["profile"] == Profile("release", ("read:org",), "", "2026-12-31 23:59:59 UTC")
+
+
+def test_add_with_manual_scopes_allows_unavailable_inspection(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["add", "release", "--stdin", "--scopes", "read:org"])
+    store = MemoryStore()
+    captured: dict[str, Profile] = {}
+
+    def unavailable(token: str) -> TokenMetadata:
+        raise StoreError("GitHub API is unavailable")
+
+    monkeypatch.setattr(cli, "_read_token", lambda use_stdin: "token-value")
+    monkeypatch.setattr(cli, "inspect_token", unavailable)
+    monkeypatch.setattr(store, "put", lambda profile, token, replace: captured.update(profile=profile), raising=False)
+
+    assert cli.dispatch(args, store) == 0  # type: ignore[arg-type]
+    assert captured["profile"] == Profile("release", ("read:org",))
 
 
 def test_parser_rejects_removed_legacy_migration_command() -> None:
@@ -84,6 +132,7 @@ def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr().out
     assert "* read" in output
     assert "scopes=contents:read" in output
+    assert "expires=2026-12-31 23:59:59 UTC" in output
     assert "token-read" not in output
 
 

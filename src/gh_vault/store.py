@@ -21,13 +21,15 @@ class Profile:
     name: str
     scopes: tuple[str, ...] = ()
     note: str = ""
+    expires_at: str | None = None
 
     @classmethod
     def from_dict(cls, name: str, value: dict[str, Any]) -> "Profile":
-        return cls(name, tuple(value.get("scopes", ())), value.get("note", ""))
+        expires_at = value.get("expires_at")
+        return cls(name, tuple(value.get("scopes", ())), value.get("note", ""), expires_at if isinstance(expires_at, str) else None)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"scopes": list(self.scopes), "note": self.note}
+        return {"scopes": list(self.scopes), "note": self.note, "expires_at": self.expires_at}
 
 
 class VaultStore:

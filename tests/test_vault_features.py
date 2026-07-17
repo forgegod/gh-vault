@@ -7,6 +7,7 @@ import pytest
 
 from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
+from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
 
 
@@ -88,6 +89,34 @@ def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="unsupported dotenv syntax"):
         parse_dotenv(env)
+
+
+def test_inspect_token_reads_scope_and_expiration_headers(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    class Response:
+        headers = {
+            "X-OAuth-Scopes": "repo, workflow",
+            "GitHub-Authentication-Token-Expiration": "2026-12-31 23:59:59 UTC",
+        }
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    def fake_urlopen(request, timeout: int) -> Response:
+        observed.update(url=request.full_url, authorization=request.get_header("Authorization"), timeout=timeout)
+        return Response()
+
+    monkeypatch.setattr("gh_vault.github.urlopen", fake_urlopen)
+
+    metadata = inspect_token("token-value")
+
+    assert metadata.scopes == ("repo", "workflow")
+    assert metadata.expires_at == "2026-12-31 23:59:59 UTC"
+    assert observed == {"url": "https://api.github.com/user", "authorization": "Bearer token-value", "timeout": 10}
 
 
 def test_archive_and_restore_uses_template_comments(monkeypatch, tmp_path: Path) -> None:

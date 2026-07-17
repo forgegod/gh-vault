@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Deterministic pytest coverage for the CLI boundary, credential-helper filtering, child-process token injection, profile metadata persistence, and the `pass` integration contract.
+Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspection, credential-helper filtering, child-process token injection, profile metadata persistence, and the `pass` integration contract.
 
 ## Ownership
 
 | Item | Role |
 |---|---|
-| `test_cli.py` | Parser helpers, profile listing, Git credential output filtering, and `run` environment behavior using an in-memory store. |
+| `test_cli.py` | Parser helpers, token metadata integration, profile listing, Git credential output filtering, and `run` environment behavior using an in-memory store. |
 | `test_store.py` | Store lifecycle, restrictive permissions, replacement rules, token validation, missing-secret errors, and a temporary executable fake `pass` backend. |
-| `test_vault_features.py` | Project-origin namespace normalization, encrypted environment archive/restore, remote-variable import, remote-secret checks, `act` exports, and workflow-wiring checks. |
+| `test_vault_features.py` | Project-origin namespace normalization, mocked GitHub token metadata, encrypted environment archive/restore, remote-variable import, remote-secret checks, `act` exports, and workflow-wiring checks. |
 
 ## Local Contracts
 

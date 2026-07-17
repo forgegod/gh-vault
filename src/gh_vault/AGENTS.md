@@ -13,13 +13,14 @@ Production package for storing named GitHub tokens and project environment archi
 | `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config persistence, `pass` integration, and backend errors. |
 | `envfiles.py` | Safe dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |
+| `github.py` | GitHub token metadata inspection without exposing token values. |
 | `actions.py` | GitHub Actions value selection, remote-variable import, `gh` sync, `act` exports, and workflow references. |
 
 ## Local Contracts
 
 - `gh-vault` is the only console command and enters `gh_vault.cli:main`; do not add aliases that collide with shell tooling.
 - Profile names are 1–64 characters and contain only letters, digits, `.`, `_`, or `-`; the first character is alphanumeric.
-- `--scopes` metadata is operator-declared, trimmed, order-preserving, and deduplicated. It is not presented as GitHub-verified.
+- `add` discovers classic-PAT scopes from GitHub when `--scopes` is absent; explicit `--scopes` is trimmed, order-preserving, and deduplicated. GitHub-provided token expiration metadata is stored when available.
 - Token values are non-empty single lines stored only through `pass` under `gh-vault/<profile>` in `${PASSWORD_STORE_DIR:-~/.password-store}`; archive data also stays below that namespace.
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
 - The first added profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.

@@ -1,6 +1,6 @@
 # gh-vault
 
-`gh-vault` keeps named GitHub tokens and project `.env` values in GPG-encrypted `pass` entries. It also syncs declared GitHub Actions values, exports files for `act`, and checks workflow wiring. It never keeps secret values in the checkout or ordinary command output.
+`gh-vault` keeps named GitHub tokens and project `.env` values in GPG-encrypted `pass` entries. It also records available token scope and expiration metadata, syncs declared GitHub Actions values, exports files for `act`, and checks workflow wiring. It never keeps secret values in the checkout or ordinary command output.
 
 ## Requirements
 
@@ -17,7 +17,8 @@ uv tool install --editable .
 ## Tokens and Git credentials
 
 ```sh
-gh-vault add repo-read --scopes contents:read,metadata:read
+gh-vault add repo-read # discovers classic-PAT scopes and expiration
+gh-vault add repo-read --scopes contents:read,metadata:read # explicit scope override
 gh-vault activate repo-read
 gh-vault run -- gh repo view owner/repo
 git config credential.https://github.com.helper '!gh-vault git-credential'
@@ -28,6 +29,8 @@ Read a token from standard input for automation:
 ```sh
 printf '%s' "$TOKEN" | gh-vault add ci --stdin
 ```
+
+When `--scopes` is omitted, `add` makes one authenticated request to `https://api.github.com/user`. Classic PATs expose their granted scopes in `X-OAuth-Scopes`; GitHub supplies an expiration timestamp in `GitHub-Authentication-Token-Expiration` when one exists. Fine-grained tokens do not expose classic scopes, so their scope list remains empty. `--scopes` retains manual metadata while `add` still records an expiration when GitHub provides it. `gh-vault list` displays the saved expiration.
 
 ## Project environment archive
 

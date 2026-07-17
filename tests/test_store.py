@@ -61,11 +61,12 @@ def store(tmp_path: Path, backend: Path, monkeypatch: pytest.MonkeyPatch) -> Vau
 
 
 def test_add_select_get_and_remove(store: VaultStore) -> None:
-    store.put(Profile("repo-read", ("contents:read",), "read only"), "github_pat_read")
+    store.put(Profile("repo-read", ("contents:read",), "read only", "2026-12-31 23:59:59 UTC"), "github_pat_read")
     store.put(Profile("release", ("contents:write",)), "github_pat_write")
 
     assert store.active() == "repo-read"
     assert store.get() == "github_pat_read"
+    assert next(profile for profile in store.profiles() if profile.name == "repo-read").expires_at == "2026-12-31 23:59:59 UTC"
     store.activate("release")
     assert store.get() == "github_pat_write"
 

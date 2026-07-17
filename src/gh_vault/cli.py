@@ -129,20 +129,22 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         return 0
     if args.command == "secrets":
         if args.secrets_command == "check":
-            missing, migrated, unset_locally, variable_to_secret = remote_secret_status(args.env_file, args.repo or default_repo(directory))
-            for name in migrated:
-                print(f"{name} -> GH_VAR_{name}")
-            for name in variable_to_secret:
+            status = remote_secret_status(args.env_file, args.repo or default_repo(directory))
+            for name in status.secret_to_variable:
+                print(f"GH_VAR_{name} -> GH_SECRET_{name}")
+            for name in status.variable_to_secret:
                 print(f"GH_SECRET_{name} -> GH_VAR_{name}")
-            for name in unset_locally:
+            for name in status.remote_only_secrets:
                 print(f"GH_SECRET_{name} is not set in .env")
-            if missing:
-                print(f"Missing GitHub secrets: {', '.join(missing)}")
+            for name in status.remote_only_variables:
+                print(f"GH_VAR_{name} is not set in .env")
+            if status.missing_secrets:
+                print(f"Missing GitHub secrets: {', '.join(status.missing_secrets)}")
+            if status.missing_variables:
+                print(f"Missing GitHub variables: {', '.join(status.missing_variables)}")
+            if any((status.missing_secrets, status.missing_variables, status.remote_only_secrets, status.remote_only_variables, status.secret_to_variable, status.variable_to_secret)):
                 return 1
-            if unset_locally or variable_to_secret:
-                return 1
-            if not migrated:
-                print("All local secret names are configured on GitHub.")
+            print("All local Actions values are configured on GitHub.")
             return 0
         entries = action_values(args.env_file)
         if args.secrets_command == "sync": print(f"{'Would sync' if args.dry_run else 'Synced'} {sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types)} entry(s).")

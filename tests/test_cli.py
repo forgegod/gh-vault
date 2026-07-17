@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gh_vault import cli
+from gh_vault.actions import RemoteValueStatus
 from gh_vault.github import TokenMetadata
 from gh_vault.store import Profile, StoreError
 
@@ -105,23 +106,23 @@ def test_parser_accepts_variable_import_and_secret_check_commands() -> None:
 
 def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secrets", "check"])
-    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: (["API_KEY"], [], [], []))
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus(["API_KEY"], [], [], [], [], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out == "Missing GitHub secrets: API_KEY\n"
 
 
-def test_secret_check_reports_secret_to_variable_migrations(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_secret_check_reports_secret_to_variable_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secrets", "check"])
-    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: ([], ["API_KEY"], [], []))
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], ["SIGNIN_CLIENT_ID"], []))
 
-    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
-    assert capsys.readouterr().out == "API_KEY -> GH_VAR_API_KEY\n"
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "GH_VAR_SIGNIN_CLIENT_ID -> GH_SECRET_SIGNIN_CLIENT_ID\n"
 
 
 def test_secret_check_reports_remote_secrets_absent_from_env(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secrets", "check"])
-    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: ([], [], ["OWNCLOUD_SSH_PASSWORD"], []))
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], ["OWNCLOUD_SSH_PASSWORD"], [], [], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out == "GH_SECRET_OWNCLOUD_SSH_PASSWORD is not set in .env\n"
@@ -129,7 +130,7 @@ def test_secret_check_reports_remote_secrets_absent_from_env(monkeypatch: pytest
 
 def test_secret_check_reports_variable_to_secret_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secrets", "check"])
-    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: ([], [], [], ["JMED_SMTP_FROM"]))
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], [], ["JMED_SMTP_FROM"]))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out == "GH_SECRET_JMED_SMTP_FROM -> GH_VAR_JMED_SMTP_FROM\n"

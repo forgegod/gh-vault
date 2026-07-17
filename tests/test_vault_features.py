@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
+from gh_vault.actions import ActionValue, RemoteValueStatus, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
@@ -188,7 +188,7 @@ def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_pat
 
 def test_remote_secret_status_identifies_secret_variable_type_drift(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MIGRATED=\nGH_SECRET_MISSING=\nGH_VAR_JMED_SMTP_FROM=sender\n", encoding="utf-8")
+    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_SIGNIN_CLIENT_ID=client\nGH_SECRET_MISSING=\nGH_VAR_JMED_SMTP_FROM=sender\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     class Result:
@@ -199,11 +199,11 @@ def test_remote_secret_status_identifies_secret_variable_type_drift(monkeypatch,
 
     def fake_run(command: list[str], **kwargs: object) -> Result:
         calls.append(command)
-        return Result("CONFIGURED\nJMED_SMTP_FROM\nORPHAN\n" if command[1] == "secret" else "MIGRATED\n")
+        return Result("CONFIGURED\nJMED_SMTP_FROM\nORPHAN\n" if command[1] == "secret" else "SIGNIN_CLIENT_ID\n")
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
 
-    assert remote_secret_status(env, "owner/repo") == (["MISSING"], ["MIGRATED"], ["ORPHAN"], ["JMED_SMTP_FROM"])
+    assert remote_secret_status(env, "owner/repo") == RemoteValueStatus(["MISSING"], [], ["ORPHAN"], [], ["SIGNIN_CLIENT_ID"], ["JMED_SMTP_FROM"])
     assert calls == [
         ["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
         ["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],

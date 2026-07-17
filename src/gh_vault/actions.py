@@ -22,6 +22,16 @@ class ActionValue:
     value: str
 
 
+@dataclass(frozen=True)
+class RemoteValueStatus:
+    missing_secrets: list[str]
+    missing_variables: list[str]
+    remote_only_secrets: list[str]
+    remote_only_variables: list[str]
+    secret_to_variable: list[str]
+    variable_to_secret: list[str]
+
+
 def action_values(env_file: Path) -> list[ActionValue]:
     entries: list[ActionValue] = []
     for key, value in parse_dotenv(env_file).items():
@@ -80,7 +90,7 @@ def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int
     return target, imported
 
 
-def remote_secret_status(env_file: Path, repo: str) -> tuple[list[str], list[str], list[str], list[str]]:
+def remote_secret_status(env_file: Path, repo: str) -> RemoteValueStatus:
     values = parse_dotenv(env_file)
     local = {
         key.removeprefix("GH_SECRET_")
@@ -93,13 +103,15 @@ def remote_secret_status(env_file: Path, repo: str) -> tuple[list[str], list[str
         if key.startswith("GH_VAR_") and key.removeprefix("GH_VAR_") and not RESERVED.fullmatch(key.removeprefix("GH_VAR_"))
     }
     remote_secrets = _remote_names("secret", repo)
-    missing = local - remote_secrets
-    variable_to_secret = sorted((remote_secrets & local_variables) - local)
-    unset_locally = sorted(remote_secrets - local - local_variables)
-    if not missing:
-        return [], [], unset_locally, variable_to_secret
-    migrated = sorted(missing & _remote_names("variable", repo))
-    return sorted(missing - set(migrated)), migrated, unset_locally, variable_to_secret
+    remote_variables = _remote_names("variable", repo)
+    return RemoteValueStatus(
+        sorted(local - remote_secrets - remote_variables),
+        sorted(local_variables - remote_variables - remote_secrets),
+        sorted(remote_secrets - local - local_variables),
+        sorted(remote_variables - local - local_variables),
+        sorted(local & remote_variables),
+        sorted(local_variables & remote_secrets),
+    )
 
 
 def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bool = False) -> int:

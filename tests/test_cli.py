@@ -45,6 +45,32 @@ def test_parser_uses_public_command_name() -> None:
     assert cli.build_parser().prog == "gh-vault"
 
 
+@pytest.mark.parametrize(
+    ("arguments", "description"),
+    [
+        (["add", "--help"], "Validate and store a named GitHub token profile"),
+        (["list", "--help"], "Display stored token profiles"),
+        (["activate", "--help"], "Select the token profile"),
+        (["status", "--help"], "Show the profile selected"),
+        (["remove", "--help"], "Delete a token profile"),
+        (["run", "--help"], "Run a child command"),
+        (["git-credential", "--help"], "Serve Git's credential-helper protocol"),
+        (["env", "archive", "--help"], "Encrypt the current project environment"),
+        (["env", "restore", "--help"], "Restore a project environment"),
+        (["secrets", "sync", "--help"], "Set GH_SECRET_ entries as GitHub Secrets"),
+        (["secrets", "export-act", "--help"], "Write GH_SECRET_ values to .secrets"),
+        (["secrets", "check", "--help"], "Compare GH_SECRET_ and GH_VAR_ declarations"),
+        (["variables", "import", "--help"], "Import repository Variables as GH_VAR_ entries"),
+        (["workflow", "check", "--help"], "Report missing, mismatched, and unreferenced"),
+    ],
+)
+def test_subtool_help_explains_its_operation(arguments: list[str], description: str, capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit, match="0"):
+        cli.build_parser().parse_args(arguments)
+
+    assert description in capsys.readouterr().out
+
+
 def test_add_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["add", "release", "--stdin"])
     store = MemoryStore()

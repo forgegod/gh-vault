@@ -30,6 +30,7 @@ Production package for storing named GitHub tokens and project environment archi
 - Environment archives require `remote.origin.url`, refuse to overwrite `.env` without `--force`, and reconstruct comments from `.env.example`.
 - Actions sync accepts only `GH_SECRET_*` and `GH_VAR_*` values and sends them to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type. `--prune` removes remote-only names but leaves names declared under either local prefix and is mutually exclusive with type migration.
 - `secrets check` verifies `GH_SECRET_*` and `GH_VAR_*` names in both `.env` and GitHub without modifying `.env`; the local prefix selects the required GitHub type, so opposite remote types are nonzero directional drift. Missing and remote-only values are nonzero. `variables import` reads repository variables with `gh variable list`, writes them as `GH_VAR_*` entries to `.env` or (when absent) `.env.example`, and replaces matching entries only with `--force`.
+- Every nested command provides operation-specific `--help` text explaining its effect and its relevant GitHub Actions type mapping.
 
 ## Work Guidance
 

@@ -125,15 +125,17 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         return 0
     if args.command == "secrets":
         if args.secrets_command == "check":
-            missing, migrated, unset_locally = remote_secret_status(args.env_file, args.repo or default_repo(directory))
+            missing, migrated, unset_locally, variable_to_secret = remote_secret_status(args.env_file, args.repo or default_repo(directory))
             for name in migrated:
                 print(f"{name} -> GH_VAR_{name}")
+            for name in variable_to_secret:
+                print(f"GH_SECRET_{name} -> GH_VAR_{name}")
             for name in unset_locally:
                 print(f"GH_SECRET_{name} is not set in .env")
             if missing:
                 print(f"Missing GitHub secrets: {', '.join(missing)}")
                 return 1
-            if unset_locally:
+            if unset_locally or variable_to_secret:
                 return 1
             if not migrated:
                 print("All local secret names are configured on GitHub.")

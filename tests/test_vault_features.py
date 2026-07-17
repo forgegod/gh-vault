@@ -186,9 +186,9 @@ def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_pat
     assert example.read_text(encoding="utf-8") == "GH_VAR_REGION=remote\n"
 
 
-def test_remote_secret_status_identifies_secret_to_variable_migrations(monkeypatch, tmp_path: Path) -> None:
+def test_remote_secret_status_identifies_secret_variable_type_drift(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MIGRATED=\nGH_SECRET_MISSING=\nGH_VAR_REGION=eu\n", encoding="utf-8")
+    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MIGRATED=\nGH_SECRET_MISSING=\nGH_VAR_JMED_SMTP_FROM=sender\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     class Result:
@@ -199,11 +199,11 @@ def test_remote_secret_status_identifies_secret_to_variable_migrations(monkeypat
 
     def fake_run(command: list[str], **kwargs: object) -> Result:
         calls.append(command)
-        return Result("CONFIGURED\nORPHAN\n" if command[1] == "secret" else "MIGRATED\n")
+        return Result("CONFIGURED\nJMED_SMTP_FROM\nORPHAN\n" if command[1] == "secret" else "MIGRATED\n")
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
 
-    assert remote_secret_status(env, "owner/repo") == (["MISSING"], ["MIGRATED"], ["ORPHAN"])
+    assert remote_secret_status(env, "owner/repo") == (["MISSING"], ["MIGRATED"], ["ORPHAN"], ["JMED_SMTP_FROM"])
     assert calls == [
         ["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
         ["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],

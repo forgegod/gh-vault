@@ -115,7 +115,7 @@ falling back to targeted file tools.
 
 Root-owned artifacts:
 
-- `README.md` — user-facing requirements, installation, command usage, and security model.
-- `pyproject.toml` — package metadata, Python requirement, console entry points, source layout, and pytest configuration.
+- `README.md` — user-facing requirements, installation, command usage, security model, and release workflow.
+- `pyproject.toml` — package metadata, dynamic version (`gh_vault.__version__`), PyPI license/classifiers/URLs, console entry points, source layout, and pytest configuration.
 - `.gitignore` — generated and local-only artifacts excluded from version control.
-- `LICENSE` — MIT license terms.
+- `LICENSE` — MIT license terms (mode `0644`; bundled into sdist and wheel).

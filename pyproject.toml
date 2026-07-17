@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "github-token-safe"
+name = "gh-vault"
 version = "0.1.0"
-description = "Safely store named GitHub tokens and run tools with the selected token"
+description = "Safely store GitHub credentials and project environment archives"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 [project.scripts]
-github-token-safe = "github_token_safe.cli:main"
+gh-vault = "gh_vault.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

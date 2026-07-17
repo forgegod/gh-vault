@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-STORE_PREFIX = "github-token-safe"
+STORE_PREFIX = "gh-vault"
+LEGACY_STORE_PREFIX = "github-token-safe"
 
 
 class StoreError(RuntimeError):
@@ -23,36 +24,23 @@ class Profile:
 
     @classmethod
     def from_dict(cls, name: str, value: dict[str, Any]) -> "Profile":
-        return cls(name=name, scopes=tuple(value.get("scopes", ())), note=value.get("note", ""))
+        return cls(name, tuple(value.get("scopes", ())), value.get("note", ""))
 
     def as_dict(self) -> dict[str, Any]:
         return {"scopes": list(self.scopes), "note": self.note}
 
 
-class TokenStore:
-    def __init__(
-        self,
-        config_dir: Path | None = None,
-        pass_tool: str | None = None,
-        password_store_dir: Path | None = None,
-    ) -> None:
-        base = config_dir or Path(
-            os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
-        ) / STORE_PREFIX
+class VaultStore:
+    def __init__(self, config_dir: Path | None = None, pass_tool: str | None = None, password_store_dir: Path | None = None) -> None:
+        base = config_dir or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / STORE_PREFIX
         self.config_dir = Path(base)
         self.config_file = self.config_dir / "config.json"
         self.pass_tool = pass_tool or shutil.which("pass") or ""
-        self.password_store_dir = Path(
-            password_store_dir
-            or os.environ.get("PASSWORD_STORE_DIR", Path.home() / ".password-store")
-        ).expanduser()
+        self.password_store_dir = Path(password_store_dir or os.environ.get("PASSWORD_STORE_DIR", Path.home() / ".password-store")).expanduser()
 
     def require_backend(self) -> None:
         if not self.pass_tool:
-            raise StoreError(
-                "pass is required. Install the 'pass' package and initialize it with "
-                "'pass init <gpg-key-id>'."
-            )
+            raise StoreError("pass is required. Install the 'pass' package and initialize it with 'pass init <gpg-key-id>'.")
 
     @property
     def backend(self) -> str:
@@ -74,8 +62,7 @@ class TokenStore:
         self.config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.config_dir, 0o700)
         temporary = self.config_file.with_suffix(".tmp")
-        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-        fd = os.open(temporary, flags, 0o600)
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 os.fchmod(handle.fileno(), 0o600)
@@ -89,54 +76,33 @@ class TokenStore:
                 temporary.unlink()
 
     def profiles(self) -> list[Profile]:
-        data = self.load()
-        return [Profile.from_dict(name, value) for name, value in sorted(data["profiles"].items())]
+        return [Profile.from_dict(name, value) for name, value in sorted(self.load()["profiles"].items())]
 
     def active(self) -> str | None:
         return self.load()["active"]
 
     def put(self, profile: Profile, token: str, *, replace: bool = False) -> None:
-        self.require_backend()
         data = self.load()
         if profile.name in data["profiles"] and not replace:
             raise StoreError(f"profile '{profile.name}' already exists; use --force to replace it")
         if not token or "\n" in token or "\r" in token:
             raise StoreError("token must be a non-empty single line")
-        command = [self.pass_tool, "insert", "--force", "--multiline", self._entry(profile.name)]
-        result = subprocess.run(
-            command,
-            input=f"{token}\n",
-            text=True,
-            capture_output=True,
-            check=False,
-            env=self._backend_environment(),
-        )
-        if result.returncode != 0:
-            raise StoreError(self._backend_error("store", result))
+        self.put_secret(profile.name, token)
         data["profiles"][profile.name] = profile.as_dict()
         if data["active"] is None:
             data["active"] = profile.name
         self.save(data)
 
     def get(self, name: str | None = None) -> str:
-        self.require_backend()
         selected = name or self.active()
         if not selected:
             raise StoreError("no active profile; add or activate one first")
-        data = self.load()
-        if selected not in data["profiles"]:
+        if selected not in self.load()["profiles"]:
             raise StoreError(f"unknown profile: {selected}")
-        result = subprocess.run(
-            [self.pass_tool, "show", self._entry(selected)],
-            text=True,
-            capture_output=True,
-            check=False,
-            env=self._backend_environment(),
-        )
-        token = result.stdout.rstrip("\n")
-        if result.returncode != 0 or not token:
-            raise StoreError(self._backend_error(f"load profile '{selected}'", result))
-        return token
+        try:
+            return self.get_secret(selected)
+        except StoreError as exc:
+            raise StoreError(str(exc).replace(f"load '{selected}'", f"load profile '{selected}'")) from exc
 
     def activate(self, name: str) -> None:
         data = self.load()
@@ -146,34 +112,61 @@ class TokenStore:
         self.save(data)
 
     def remove(self, name: str) -> None:
-        self.require_backend()
         data = self.load()
         if name not in data["profiles"]:
             raise StoreError(f"unknown profile: {name}")
-        result = subprocess.run(
-            [self.pass_tool, "rm", "--force", self._entry(name)],
-            text=True,
-            capture_output=True,
-            check=False,
-            env=self._backend_environment(),
-        )
-        if result.returncode != 0:
-            raise StoreError(self._backend_error(f"remove profile '{name}'", result))
+        self.remove_secret(name)
         del data["profiles"][name]
         if data["active"] == name:
             data["active"] = None
         self.save(data)
 
-    @staticmethod
-    def _backend_error(action: str, result: subprocess.CompletedProcess[str]) -> str:
-        detail = result.stderr.strip() or "password-store returned no details"
-        return f"cannot {action}: {detail}"
+    def put_secret(self, name: str, value: str) -> None:
+        self._run(["insert", "--force", "--multiline", self._entry(name)], value + "\n", "store")
+
+    def get_secret(self, name: str) -> str:
+        return self._run(["show", self._entry(name)], None, f"load '{name}'").rstrip("\n")
+
+    def remove_secret(self, name: str) -> None:
+        self._run(["rm", "--force", self._entry(name)], None, f"remove '{name}'")
+
+    def migrate_legacy(self) -> int:
+        legacy_config = self.config_dir.parent / LEGACY_STORE_PREFIX / "config.json"
+        try:
+            legacy = json.loads(legacy_config.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise StoreError(f"legacy metadata not found: {legacy_config}") from exc
+        if self.load()["profiles"]:
+            raise StoreError("current vault already has profiles; migrate into an empty vault")
+        profiles = legacy.get("profiles")
+        if not isinstance(profiles, dict):
+            raise StoreError(f"invalid legacy config file: {legacy_config}")
+        for name, metadata in profiles.items():
+            token = self._run(["show", f"{LEGACY_STORE_PREFIX}/{name}"], None, f"load legacy '{name}'").rstrip("\n")
+            if not token:
+                raise StoreError(f"legacy profile '{name}' has no token")
+            self.put_secret(name, token)
+        data = {"active": legacy.get("active"), "profiles": profiles}
+        self.save(data)
+        return len(profiles)
+
+    def _run(self, args: list[str], input_value: str | None, action: str) -> str:
+        self.require_backend()
+        result = subprocess.run([self.pass_tool, *args], input=input_value, text=True, capture_output=True, check=False, env=self._backend_environment())
+        if result.returncode != 0:
+            raise StoreError(f"cannot {action}: {result.stderr.strip() or 'password-store returned no details'}")
+        return result.stdout
 
     @staticmethod
     def _entry(name: str) -> str:
+        if name.startswith("/") or ".." in name.split("/"):
+            raise StoreError("invalid vault entry name")
         return f"{STORE_PREFIX}/{name}"
 
     def _backend_environment(self) -> dict[str, str]:
         environment = os.environ.copy()
         environment["PASSWORD_STORE_DIR"] = str(self.password_store_dir)
         return environment
+
+
+TokenStore = VaultStore

@@ -1,94 +1,76 @@
-# github-token-safe
+# gh-vault
 
-`github-token-safe` stores GitHub tokens under names such as `repo-read` or `release-write`, then runs `gh`, `git`, or another command with the chosen token. Token values are GPG-encrypted by `pass`, not stored in the project or the tool's config file.
+`gh-vault` keeps named GitHub tokens and project `.env` values in GPG-encrypted `pass` entries. It also syncs declared GitHub Actions values, exports files for `act`, and checks workflow wiring. It never keeps secret values in the checkout or ordinary command output.
 
 ## Requirements
 
-- Linux and Python 3.10+
-- `pass` with a GPG key
-
-Ubuntu/Debian:
+- Linux, Python 3.10+, `pass`, and GPG
+- `gh` authenticated with access to the target repository for `secrets sync`
 
 ```sh
 sudo apt install pass gnupg
 gpg --full-generate-key
 pass init YOUR_GPG_KEY_ID
-```
-
-If you already use `pass`, keep the existing initialization. `github-token-safe` stores entries below `github-token-safe/` in `${PASSWORD_STORE_DIR:-~/.password-store}` and deliberately does not fall back to plaintext token files.
-
-## Install
-
-Install the command from a development checkout into an isolated user tool environment:
-
-```sh
 uv tool install --editable .
 ```
 
-Run this from the repository root. The editable install makes source changes available without reinstalling. `uv` keeps the command environment outside the checkout; if `github-token-safe` is not on `PATH`, run `uv tool update-shell` once and start a new shell.
+## Migrate from github-token-safe
 
-## Use
-
-Add tokens without putting them in shell history or process arguments:
+Install `gh-vault`, then copy existing profiles and encrypted entries. The source data is retained.
 
 ```sh
-github-token-safe add repo-read --scopes contents:read,metadata:read
-github-token-safe add release-write --scopes contents:write --note "fine-grained PAT for releases"
+gh-vault migrate
 ```
 
-The prompt does not echo input. For automation, pass the token on standard input:
+The public command and `pass` namespace are now `gh-vault`; no old command alias is retained.
+
+## Tokens and Git credentials
 
 ```sh
-printf '%s' "$TOKEN" | github-token-safe add ci --stdin
+gh-vault add repo-read --scopes contents:read,metadata:read
+gh-vault activate repo-read
+gh-vault run -- gh repo view owner/repo
+git config credential.https://github.com.helper '!gh-vault git-credential'
 ```
 
-List and select profiles:
+Read a token from standard input for automation:
 
 ```sh
-github-token-safe list
-github-token-safe activate release-write
-github-token-safe status
+printf '%s' "$TOKEN" | gh-vault add ci --stdin
 ```
 
-Run a command with the active token:
+## Project environment archive
+
+An archive is identified by the normalized `remote.origin.url` namespace. Values and the current `.env.example` are encrypted separately. `.env` comments are intentionally reconstructed from the template on restore.
 
 ```sh
-github-token-safe run -- gh auth status
-github-token-safe run -- git fetch
+# Run in the project checkout
+gh-vault env archive
+gh-vault env restore
 ```
 
-Use another profile for one command without changing the active profile:
+Restore refuses to overwrite an existing `.env`; use `--force` after reviewing it. It uses the checkout's current `.env.example`; add `--restore-example` to restore the archived template too.
+
+Only conservative dotenv syntax is accepted: assignments, quoted values, and explicit `@file:` / `@base64:` values. Shell evaluation is deliberately unsupported.
+
+## GitHub Actions values
+
+Only `GH_SECRET_NAME=value` and `GH_VAR_NAME=value` entries are considered. The prefix is stripped before writing Actions values. Reserved runner names are skipped.
 
 ```sh
-github-token-safe run --name repo-read -- gh repo view owner/repo
+gh-vault secrets sync --dry-run
+gh-vault secrets sync
+gh-vault secrets sync --migrate-types
+gh-vault secrets export-act
+act workflow_dispatch --secret-file .secrets --var-file .vars
+gh-vault workflow check
 ```
 
-`run` sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the child process. It does not print the token and does not modify your shell.
-
-Remove a profile:
-
-```sh
-github-token-safe remove release-write
-```
-
-## Git credential helper
-
-To make HTTPS Git operations use the active profile in this repository:
-
-```sh
-git config credential.https://github.com.helper '!github-token-safe git-credential'
-```
-
-Or configure it globally by adding `--global`. The helper responds only for HTTPS requests to `github.com`; it does not persist credentials supplied by Git. Removing the active profile leaves no profile active rather than selecting another token implicitly.
-
-## Scope labels
-
-`--scopes` records operator-supplied metadata so `github-token-safe list` explains each profile's purpose. GitHub does not expose a reliable common scope API for both classic and fine-grained PATs, so `github-token-safe` does not claim to verify those labels.
+`sync` is repository-scoped, resolves `--repo` from origin by default, and passes values to `gh` on standard input. Ordinary sync never deletes remote values. `--migrate-types` explicitly removes a same-name opposite-type remote value before setting the declared type, preventing stale secret/variable fallbacks after a type change. `workflow check` fails for unreferenced local values, single-type mismatches, and expressions that put `vars.X` before `secrets.X`; unknown workflow references are warnings. It does not impose repository-specific namespace mappings.
 
 ## Security model
 
-- Tokens are GPG-encrypted by `pass` below `github-token-safe/` in `${PASSWORD_STORE_DIR:-~/.password-store}`. The password store is outside the development checkout unless you explicitly override `PASSWORD_STORE_DIR` to point there.
-- Metadata is stored at `${XDG_CONFIG_HOME:-~/.config}/github-token-safe/config.json` with mode `0600`.
-- Neither token values nor profile metadata are stored in the development checkout.
-- Tokens are passed to child commands through environment variables. A same-user process with sufficient inspection rights may read another process's environment; this is also how `gh` consumes `GH_TOKEN`.
-- `github-token-safe` does not write token values to config files, logs, or command arguments. The only stdout exception is the strict response expected when Git invokes `github-token-safe git-credential get`.
+- Tokens, archived values, and archive templates live only in `pass` below `gh-vault/`.
+- Metadata is mode `0600` under `${XDG_CONFIG_HOME:-~/.config}/gh-vault/`; it contains no secret values.
+- `.env`, `.secrets`, and `.vars` are ignored by Git. Generated files are mode `0600`.
+- The only token stdout is the exact credential-helper response Git requires.

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from github_token_safe import cli
-from github_token_safe.store import Profile, StoreError
+from gh_vault import cli
+from gh_vault.store import Profile, StoreError
 
 
 class MemoryStore:
@@ -40,7 +40,7 @@ def test_parse_scopes_trims_and_deduplicates() -> None:
 
 
 def test_parser_uses_public_command_name() -> None:
-    assert cli.build_parser().prog == "github-token-safe"
+    assert cli.build_parser().prog == "gh-vault"
 
 
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:

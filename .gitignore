@@ -7,3 +7,9 @@ dist/
 .pytest_cache/
 .coverage
 gh_auth_status.txt
+.env
+.env.*
+!.env.example
+.secrets
+.vars
+.hermes/

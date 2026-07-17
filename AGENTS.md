@@ -86,7 +86,7 @@ Project-wide durable preferences (style, workflow, conventions) live in user mem
 ## Architectural decisions
 
 - **Agent harness protected by tirith.sh.** Reading passwords or access tokens is prohibited. Extract variables from `.env` / config files without relaying their values; use environment variables by importing them for Bash execution. `***` in output is a tirith redaction marker, not a literal value — never "fix" it to a variable ref.
-- **Encrypted secret backend.** GitHub tokens belong only in `pass` entries below `github-token-safe/`; project files and metadata config must never contain token values or provide a plaintext fallback.
+- **Encrypted vault backend.** Tokens, archived project environment values, and templates belong only in `pass` entries below `gh-vault/`; project files and metadata config must never contain plaintext secret values or a fallback.
 - **Intentional credential output boundary.** Token values must not reach stdout except for the exact `git-credential get` response Git requires.
 
 ## Codebase exploration — mandatory graph-first workflow
@@ -109,7 +109,7 @@ falling back to targeted file tools.
 
 | Child | Owns | Read when editing… |
 |---|---|---|
-| `src/github_token_safe/AGENTS.md` | Production Python package, CLI behavior, secret backend, and metadata persistence | `src/github_token_safe/**`, console command behavior, storage or security contracts |
+| `src/gh_vault/AGENTS.md` | Production Python package, CLI behavior, secret backend, environment archives, and metadata persistence | `src/gh_vault/**`, console command behavior, storage, archive, or security contracts |
 | `tests/AGENTS.md` | Pytest fixtures and executable CLI/store contracts | `tests/**`, test conventions, or verification coverage |
 
 Root-owned artifacts:

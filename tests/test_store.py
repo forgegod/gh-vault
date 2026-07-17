@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from github_token_safe.store import Profile, StoreError, TokenStore
+from gh_vault.store import Profile, StoreError, VaultStore
 
 
 @pytest.fixture
@@ -49,18 +49,18 @@ else:
 
 
 @pytest.fixture
-def store(tmp_path: Path, backend: Path, monkeypatch: pytest.MonkeyPatch) -> TokenStore:
+def store(tmp_path: Path, backend: Path, monkeypatch: pytest.MonkeyPatch) -> VaultStore:
     password_store_dir = tmp_path / "password-store"
     password_store_dir.mkdir()
     monkeypatch.setenv("FAKE_SECRET_DB", str(password_store_dir / "secrets.json"))
-    return TokenStore(
+    return VaultStore(
         config_dir=tmp_path / "config",
         pass_tool=str(backend),
         password_store_dir=password_store_dir,
     )
 
 
-def test_add_select_get_and_remove(store: TokenStore) -> None:
+def test_add_select_get_and_remove(store: VaultStore) -> None:
     store.put(Profile("repo-read", ("contents:read",), "read only"), "github_pat_read")
     store.put(Profile("release", ("contents:write",)), "github_pat_write")
 
@@ -74,7 +74,7 @@ def test_add_select_get_and_remove(store: TokenStore) -> None:
     assert [profile.name for profile in store.profiles()] == ["repo-read"]
 
 
-def test_config_permissions_are_restrictive(store: TokenStore) -> None:
+def test_config_permissions_are_restrictive(store: VaultStore) -> None:
     store.put(Profile("default"), "github_pat_value")
 
     assert stat.S_IMODE(store.config_dir.stat().st_mode) == 0o700
@@ -89,12 +89,12 @@ def test_default_password_store_is_in_the_user_home(
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.delenv("PASSWORD_STORE_DIR", raising=False)
 
-    store = TokenStore(config_dir=tmp_path / "config", pass_tool="pass")
+    store = VaultStore(config_dir=tmp_path / "config", pass_tool="pass")
 
     assert store.password_store_dir == tmp_path / "home" / ".password-store"
 
 
-def test_replace_requires_force(store: TokenStore) -> None:
+def test_replace_requires_force(store: VaultStore) -> None:
     store.put(Profile("default"), "old")
     with pytest.raises(StoreError, match="already exists"):
         store.put(Profile("default"), "new")
@@ -105,18 +105,18 @@ def test_replace_requires_force(store: TokenStore) -> None:
 
 
 def test_missing_backend_has_actionable_error(tmp_path: Path) -> None:
-    store = TokenStore(config_dir=tmp_path, pass_tool="")
+    store = VaultStore(config_dir=tmp_path, pass_tool="")
     store.pass_tool = ""
     with pytest.raises(StoreError, match="pass is required"):
         store.require_backend()
 
 
-def test_rejects_multiline_tokens(store: TokenStore) -> None:
+def test_rejects_multiline_tokens(store: VaultStore) -> None:
     with pytest.raises(StoreError, match="single line"):
         store.put(Profile("bad"), "first\nsecond")
 
 
-def test_missing_secret_is_reported(store: TokenStore) -> None:
+def test_missing_secret_is_reported(store: VaultStore) -> None:
     store.put(Profile("missing"), "value")
     secret_db = Path(os.environ["FAKE_SECRET_DB"])
     secret_db.write_text("{}", encoding="utf-8")

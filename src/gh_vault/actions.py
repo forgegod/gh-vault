@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import base64
+import json
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+from .envfiles import parse_dotenv, project_namespace
+from .store import StoreError
+
+RESERVED = re.compile(r"^(?:GITHUB_|RUNNER_|CI$|GH_TOKEN$)")
+REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
+
+
+@dataclass(frozen=True)
+class ActionValue:
+    name: str
+    kind: str
+    value: str
+
+
+def action_values(env_file: Path) -> list[ActionValue]:
+    entries: list[ActionValue] = []
+    for key, value in parse_dotenv(env_file).items():
+        if key.startswith("GH_SECRET_"):
+            name, kind = key.removeprefix("GH_SECRET_"), "secret"
+        elif key.startswith("GH_VAR_"):
+            name, kind = key.removeprefix("GH_VAR_"), "var"
+        else:
+            continue
+        if name and value and not RESERVED.fullmatch(name):
+            entries.append(ActionValue(name, kind, value))
+    return entries
+
+
+def _remote_names(kind: str, repo: str) -> set[str]:
+    result = subprocess.run(
+        ["gh", kind, "list", "--repo", repo, "--json", "name", "--jq", ".[].name"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise StoreError(f"cannot list GitHub {kind}s: {result.stderr.strip() or 'gh failed'}")
+    return {name for name in result.stdout.splitlines() if name}
+
+
+def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bool = False) -> int:
+    remote_secrets = _remote_names("secret", repo) if migrate_types else set()
+    remote_variables = _remote_names("variable", repo) if migrate_types else set()
+    for entry in entries:
+        opposite_kind = "variable" if entry.kind == "secret" else "secret"
+        opposite_names = remote_variables if entry.kind == "secret" else remote_secrets
+        if entry.name in opposite_names:
+            if migrate_types and not dry_run:
+                result = subprocess.run(["gh", opposite_kind, "delete" if opposite_kind == "variable" else "remove", entry.name, "--repo", repo], text=True, capture_output=True, check=False)
+                if result.returncode:
+                    raise StoreError(f"cannot migrate '{entry.name}': failed to remove stale {opposite_kind}: {result.stderr.strip() or 'gh failed'}")
+        command = ["gh", "secret" if entry.kind == "secret" else "variable", "set", entry.name, "--repo", repo]
+        if not dry_run:
+            result = subprocess.run(command, input=entry.value, text=True, capture_output=True, check=False)
+            if result.returncode:
+                raise StoreError(f"cannot set {entry.kind} '{entry.name}'; stale counterpart was removed and must be restored manually: {result.stderr.strip() or 'gh failed'}")
+    return len(entries)
+
+
+def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) -> tuple[int, int]:
+    grouped = {"secret": [], "var": []}
+    for entry in entries:
+        value = entry.value
+        if "\n" in value:
+            value = "@base64:" + base64.b64encode(value.encode()).decode()
+        grouped[entry.kind].append(f"{entry.name}={value}")
+    for kind, target in (("secret", secrets_path), ("var", vars_path)):
+        if grouped[kind]:
+            target.write_text("\n".join(grouped[kind]) + "\n", encoding="utf-8")
+            target.chmod(0o600)
+    return len(grouped["secret"]), len(grouped["var"])
+
+
+def check_workflows(directory: Path, entries: list[ActionValue]) -> dict[str, list[str]]:
+    workflow_dir = directory / ".github" / "workflows"
+    if not workflow_dir.is_dir():
+        raise StoreError(f"workflow directory not found: {workflow_dir}")
+    refs: dict[str, set[str]] = {}
+    order: list[str] = []
+    for path in sorted((*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml"))):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            found = [(match["name"], match["kind"]) for match in REF.finditer(line)]
+            for name, kind in found:
+                refs.setdefault(name, set()).add(kind)
+            kinds = [kind for _, kind in found]
+            if "secrets" in kinds and "vars" in kinds and kinds.index("vars") < kinds.index("secrets"):
+                order.append(f"{path.name}:{number}")
+    local = {entry.name: entry.kind for entry in entries}
+    unreferenced = sorted(name for name in local if name not in refs)
+    mismatch = sorted(name for name, kind in local.items() if name in refs and len(refs[name]) == 1 and ({"secret": "secrets", "var": "vars"}[kind] not in refs[name]))
+    orphan = sorted(name for name in refs if name not in local)
+    return {"unreferenced": unreferenced, "type_mismatch": mismatch, "order": order, "orphan": orphan}
+
+
+def suggested_env(entries: list[ActionValue]) -> str:
+    return "\n".join(f"  {entry.name}: ${{{{ {'secrets' if entry.kind == 'secret' else 'vars'}.{entry.name} }}}}" for entry in entries)
+
+
+def default_repo(directory: Path) -> str:
+    namespace, _ = project_namespace(directory)
+    return namespace
+
+
+def json_result(result: dict[str, list[str]]) -> str:
+    return json.dumps(result, indent=2, sort_keys=True)

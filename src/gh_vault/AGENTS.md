@@ -13,7 +13,7 @@ Production package for storing named GitHub tokens and project environment archi
 | `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config persistence, `pass` integration, and backend errors. |
 | `envfiles.py` | Safe dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |
-| `actions.py` | GitHub Actions value selection, `gh` sync, `act` exports, and workflow references. |
+| `actions.py` | GitHub Actions value selection, remote-variable import, `gh` sync, `act` exports, and workflow references. |
 
 ## Local Contracts
 
@@ -28,6 +28,7 @@ Production package for storing named GitHub tokens and project environment archi
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.
 - Environment archives require `remote.origin.url`, refuse to overwrite `.env` without `--force`, and reconstruct comments from `.env.example`.
 - Actions sync accepts only `GH_SECRET_*` and `GH_VAR_*` values and sends them to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type.
+- `secrets check` verifies every declared `GH_SECRET_*` name exists on GitHub without modifying `.env`. `variables import` reads repository variables with `gh variable list`, writes them as `GH_VAR_*` entries to `.env` or (when absent) `.env.example`, and replaces matching entries only with `--force`.
 
 ## Work Guidance
 

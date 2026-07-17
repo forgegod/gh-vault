@@ -48,6 +48,21 @@ def test_parser_rejects_removed_legacy_migration_command() -> None:
         cli.build_parser().parse_args(["migrate"])
 
 
+def test_parser_accepts_variable_import_and_secret_check_commands() -> None:
+    args = cli.build_parser().parse_args(["variables", "import", "--force"])
+    assert args.variables_command == "import"
+    assert args.force is True
+    assert cli.build_parser().parse_args(["secrets", "check"]).secrets_command == "check"
+
+
+def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secrets", "check"])
+    monkeypatch.setattr(cli, "missing_remote_secrets", lambda *args: ["API_KEY"])
+
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "Missing GitHub secrets: API_KEY\n"
+
+
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli._list(MemoryStore()) == 0  # type: ignore[arg-type]
     output = capsys.readouterr().out

@@ -5,7 +5,7 @@
 ## Requirements
 
 - Linux, Python 3.10+, `pass`, and GPG
-- `gh` authenticated with access to the target repository for `secrets sync`
+- `gh` authenticated with access to the target repository for Actions commands
 
 ```sh
 sudo apt install pass gnupg
@@ -52,11 +52,13 @@ gh-vault secrets sync --dry-run
 gh-vault secrets sync
 gh-vault secrets sync --migrate-types
 gh-vault secrets export-act
+gh-vault secrets check
+gh-vault variables import
 act workflow_dispatch --secret-file .secrets --var-file .vars
 gh-vault workflow check
 ```
 
-`sync` is repository-scoped, resolves `--repo` from origin by default, and passes values to `gh` on standard input. Ordinary sync never deletes remote values. `--migrate-types` explicitly removes a same-name opposite-type remote value before setting the declared type, preventing stale secret/variable fallbacks after a type change. `workflow check` fails for unreferenced local values, single-type mismatches, and expressions that put `vars.X` before `secrets.X`; unknown workflow references are warnings. It does not impose repository-specific namespace mappings.
+`sync` is repository-scoped, resolves `--repo` from origin by default, and passes values to `gh` on standard input. Ordinary sync never deletes remote values. `--migrate-types` explicitly removes a same-name opposite-type remote value before setting the declared type, preventing stale secret/variable fallbacks after a type change. `secrets check` compares each `GH_SECRET_*` name declared in `.env` with `gh secret list`, returns nonzero for names missing on GitHub, and never changes `.env`. `variables import` reads repository variables with `gh variable list` into `GH_VAR_*` entries, targeting `.env` when it exists and otherwise `.env.example`. Existing entries are retained unless `--force` is supplied. `workflow check` fails for unreferenced local values, single-type mismatches, and expressions that put `vars.X` before `secrets.X`; unknown workflow references are warnings. It does not impose repository-specific namespace mappings.
 
 ## Security model
 

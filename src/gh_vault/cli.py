@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, json_result, suggested_env, sync
+from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, missing_remote_secrets, suggested_env, sync
 from .envfiles import archive_environment, restore_environment
 from .store import Profile, StoreError, VaultStore
 
@@ -29,23 +29,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gh-vault", description="Store GitHub credentials and project environment archives safely.")
     commands = parser.add_subparsers(dest="command", required=True)
     add = commands.add_parser("add", help="store a named token")
-    add.add_argument("name", type=profile_name); add.add_argument("--scopes", type=parse_scopes, default=()); add.add_argument("--note", default=""); add.add_argument("--stdin", action="store_true"); add.add_argument("--force", action="store_true")
+    add.add_argument("name", type=profile_name, help="profile name"); add.add_argument("--scopes", type=parse_scopes, default=(), help="comma-separated token scopes"); add.add_argument("--note", default="", help="operator note"); add.add_argument("--stdin", action="store_true", help="read the token from standard input"); add.add_argument("--force", action="store_true", help="replace an existing profile")
     commands.add_parser("list", help="list token profiles")
-    activate = commands.add_parser("activate", help="select the default profile"); activate.add_argument("name", type=profile_name)
+    activate = commands.add_parser("activate", help="select the default profile"); activate.add_argument("name", type=profile_name, help="profile name")
     commands.add_parser("status", help="show the active profile")
-    remove = commands.add_parser("remove", help="delete a profile"); remove.add_argument("name", type=profile_name)
-    run = commands.add_parser("run", help="run a command with a token"); run.add_argument("--name", type=profile_name); run.add_argument("program", nargs=argparse.REMAINDER)
-    credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol"); credential.add_argument("operation", choices=("get", "store", "erase"))
+    remove = commands.add_parser("remove", help="delete a profile"); remove.add_argument("name", type=profile_name, help="profile name")
+    run = commands.add_parser("run", help="run a command with a token"); run.add_argument("--name", type=profile_name, help="profile name; defaults to the active profile"); run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
+    credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol"); credential.add_argument("operation", choices=("get", "store", "erase"), help="Git credential-helper operation")
 
     env = commands.add_parser("env", help="archive or restore project environment files").add_subparsers(dest="env_command", required=True)
     for name in ("archive", "restore"):
-        command = env.add_parser(name); command.add_argument("--env-file", type=Path, default=Path(".env")); command.add_argument("--example-file", type=Path, default=Path(".env.example"))
-    env.choices["restore"].add_argument("--force", action="store_true"); env.choices["restore"].add_argument("--restore-example", action="store_true")
+        command = env.add_parser(name); command.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); command.add_argument("--example-file", type=Path, default=Path(".env.example"), help="environment template path")
+    env.choices["restore"].add_argument("--force", action="store_true", help="overwrite an existing environment file"); env.choices["restore"].add_argument("--restore-example", action="store_true", help="restore the archived template")
     secrets = commands.add_parser("secrets", help="sync or export GH_SECRET_/GH_VAR_ entries").add_subparsers(dest="secrets_command", required=True)
-    sync_parser = secrets.add_parser("sync"); sync_parser.add_argument("--env-file", type=Path, default=Path(".env")); sync_parser.add_argument("--repo"); sync_parser.add_argument("--dry-run", action="store_true"); sync_parser.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync")
-    act = secrets.add_parser("export-act"); act.add_argument("--env-file", type=Path, default=Path(".env")); act.add_argument("--output", type=Path, default=Path(".secrets")); act.add_argument("--var-output", type=Path, default=Path(".vars"))
+    sync_parser = secrets.add_parser("sync", help="sync local Actions values"); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); sync_parser.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync")
+    act = secrets.add_parser("export-act", help="export local values for act"); act.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); act.add_argument("--output", type=Path, default=Path(".secrets"), help="output path for secrets"); act.add_argument("--var-output", type=Path, default=Path(".vars"), help="output path for variables")
+    secret_check = secrets.add_parser("check", help="verify local secret names exist on GitHub"); secret_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); secret_check.add_argument("--repo", help="target repository; defaults to origin")
+    variables = commands.add_parser("variables", help="manage repository variables").add_subparsers(dest="variables_command", required=True)
+    variable_import = variables.add_parser("import", help="import GitHub variables into .env or .env.example"); variable_import.add_argument("--repo", help="source repository; defaults to origin"); variable_import.add_argument("--force", action="store_true", help="overwrite existing GH_VAR_ settings")
     workflow = commands.add_parser("workflow", help="validate GitHub Actions secret wiring").add_subparsers(dest="workflow_command", required=True)
-    check = workflow.add_parser("check"); check.add_argument("--env-file", type=Path, default=Path(".env")); check.add_argument("--json", action="store_true"); check.add_argument("--fix", action="store_true")
+    check = workflow.add_parser("check"); check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); check.add_argument("--json", action="store_true", help="print results as JSON"); check.add_argument("--fix", action="store_true", help="print suggested workflow environment entries")
     return parser
 
 
@@ -105,11 +108,23 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         if args.env_command == "archive": print(f"Archived environment for {archive_environment(store, directory, args.env_file, args.example_file)}.")
         else: print(f"Restored environment for {restore_environment(store, directory, args.env_file, args.example_file, args.force, args.restore_example)}.")
         return 0
-    entries = action_values(args.env_file)
     if args.command == "secrets":
+        if args.secrets_command == "check":
+            missing = missing_remote_secrets(args.env_file, args.repo or default_repo(directory))
+            if missing:
+                print(f"Missing GitHub secrets: {', '.join(missing)}")
+                return 1
+            print("All local secret names are configured on GitHub.")
+            return 0
+        entries = action_values(args.env_file)
         if args.secrets_command == "sync": print(f"{'Would sync' if args.dry_run else 'Synced'} {sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types)} entry(s).")
         else: secret_count, var_count = export_act(entries, args.output, args.var_output); print(f"Wrote {secret_count} secret(s) and {var_count} variable(s).")
         return 0
+    if args.command == "variables":
+        target, count = import_variables(directory, args.repo or default_repo(directory), args.force)
+        print(f"Imported {count} variable(s) into {target}.")
+        return 0
+    entries = action_values(args.env_file)
     result = check_workflows(directory, entries)
     if args.json: print(json_result(result))
     else:

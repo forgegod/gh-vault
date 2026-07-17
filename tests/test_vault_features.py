@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, sync
+from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, import_variables, missing_remote_secrets, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
 from gh_vault.store import StoreError
 
@@ -118,6 +118,63 @@ def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("env:\n  API_KEY: ${{ secrets.API_KEY }}\n  REGION: ${{ vars.REGION }}\n", encoding="utf-8")
     assert check_workflows(tmp_path, entries) == {"unreferenced": [], "type_mismatch": [], "order": [], "orphan": []}
+
+
+def test_import_variables_preserves_existing_values_without_force(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# Deployment\nGH_VAR_REGION=local\nOTHER=value\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = '[{"name":"REGION","value":"remote"},{"name":"MODE","value":"production"}]'
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert import_variables(tmp_path, "owner/repo", False) == (env, 1)
+    assert env.read_text(encoding="utf-8") == "# Deployment\nGH_VAR_REGION=local\nOTHER=value\n\n# Local additions\nGH_VAR_MODE=production\n"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    assert calls == [["gh", "variable", "list", "--repo", "owner/repo", "--json", "name,value"]]
+
+
+def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_path: Path) -> None:
+    example = tmp_path / ".env.example"
+    example.write_text("GH_VAR_REGION=local\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = '[{"name":"REGION","value":"remote"}]'
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert import_variables(tmp_path, "owner/repo", True) == (example, 1)
+    assert example.read_text(encoding="utf-8") == "GH_VAR_REGION=remote\n"
+
+
+def test_missing_remote_secrets_checks_declared_secret_names(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MISSING=\nGH_VAR_REGION=eu\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = "CONFIGURED\n"
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert missing_remote_secrets(env, "owner/repo") == ["MISSING"]
+    assert calls == [["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"]]
 
 
 def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> None:

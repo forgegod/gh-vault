@@ -7,11 +7,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .envfiles import parse_dotenv, project_namespace
+from .envfiles import _write_private, parse_dotenv, project_namespace, render_template
 from .store import StoreError
 
 RESERVED = re.compile(r"^(?:GITHUB_|RUNNER_|CI$|GH_TOKEN$)")
 REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
+DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,47 @@ def _remote_names(kind: str, repo: str) -> set[str]:
     if result.returncode:
         raise StoreError(f"cannot list GitHub {kind}s: {result.stderr.strip() or 'gh failed'}")
     return {name for name in result.stdout.splitlines() if name}
+
+
+def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int]:
+    target = directory / ".env"
+    if not target.exists():
+        target = directory / ".env.example"
+    values = parse_dotenv(target)
+    result = subprocess.run(
+        ["gh", "variable", "list", "--repo", repo, "--json", "name,value"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise StoreError(f"cannot list GitHub variables: {result.stderr.strip() or 'gh failed'}")
+    try:
+        remote = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise StoreError("GitHub variable list returned invalid JSON") from exc
+    if not isinstance(remote, list) or any(
+        not isinstance(item, dict) or not isinstance(item.get("name"), str) or not DOTENV_KEY.fullmatch(item["name"]) or not isinstance(item.get("value"), str)
+        for item in remote
+    ):
+        raise StoreError("GitHub variable list returned invalid data")
+    imported = 0
+    for item in remote:
+        key = f"GH_VAR_{item['name']}"
+        if force or key not in values:
+            values[key] = item["value"]
+            imported += 1
+    _write_private(target, render_template(target.read_text(encoding="utf-8"), values))
+    return target, imported
+
+
+def missing_remote_secrets(env_file: Path, repo: str) -> list[str]:
+    local = {
+        key.removeprefix("GH_SECRET_")
+        for key in parse_dotenv(env_file)
+        if key.startswith("GH_SECRET_") and key.removeprefix("GH_SECRET_") and not RESERVED.fullmatch(key.removeprefix("GH_SECRET_"))
+    }
+    return sorted(local - _remote_names("secret", repo))
 
 
 def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bool = False) -> int:

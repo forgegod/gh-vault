@@ -109,6 +109,7 @@ falling back to targeted file tools.
 
 | Child | Owns | Read when editing… |
 |---|---|---|
+| `assets/AGENTS.md` | Brand identity, deterministic asset generation, vector sources, raster renders, and bundled font | `assets/**`, logo geometry, palette, typography, or social-preview copy |
 | `src/gh_vault/AGENTS.md` | Production Python package, CLI behavior, secret backend, environment archives, and metadata persistence | `src/gh_vault/**`, console command behavior, storage, archive, or security contracts |
 | `tests/AGENTS.md` | Pytest fixtures and executable CLI/store contracts | `tests/**`, test conventions, or verification coverage |
 

@@ -1,5 +1,7 @@
 # gh-vault
 
+![gh-vault](assets/logo-1024.png)
+
 `gh-vault` keeps named GitHub tokens and project `.env` values in GPG-encrypted `pass` entries. It also records available token scope and expiration metadata, syncs declared GitHub Actions values, exports files for `act`, and checks workflow wiring. It never keeps secret values in the checkout or ordinary command output.
 
 ## Requirements

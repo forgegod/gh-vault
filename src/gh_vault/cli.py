@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, missing_remote_secrets, suggested_env, sync
+from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, suggested_env, sync
 from .envfiles import archive_environment, restore_environment
 from .store import Profile, StoreError, VaultStore
 
@@ -110,11 +110,18 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         return 0
     if args.command == "secrets":
         if args.secrets_command == "check":
-            missing = missing_remote_secrets(args.env_file, args.repo or default_repo(directory))
+            missing, migrated, unset_locally = remote_secret_status(args.env_file, args.repo or default_repo(directory))
+            for name in migrated:
+                print(f"{name} -> GH_VAR_{name}")
+            for name in unset_locally:
+                print(f"GH_SECRET_{name} is not set in .env")
             if missing:
                 print(f"Missing GitHub secrets: {', '.join(missing)}")
                 return 1
-            print("All local secret names are configured on GitHub.")
+            if unset_locally:
+                return 1
+            if not migrated:
+                print("All local secret names are configured on GitHub.")
             return 0
         entries = action_values(args.env_file)
         if args.secrets_command == "sync": print(f"{'Would sync' if args.dry_run else 'Synced'} {sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types)} entry(s).")

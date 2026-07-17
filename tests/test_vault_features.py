@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, import_variables, missing_remote_secrets, sync
+from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
 from gh_vault.store import StoreError
 
@@ -157,24 +157,28 @@ def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_pat
     assert example.read_text(encoding="utf-8") == "GH_VAR_REGION=remote\n"
 
 
-def test_missing_remote_secrets_checks_declared_secret_names(monkeypatch, tmp_path: Path) -> None:
+def test_remote_secret_status_identifies_secret_to_variable_migrations(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MISSING=\nGH_VAR_REGION=eu\n", encoding="utf-8")
+    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_MIGRATED=\nGH_SECRET_MISSING=\nGH_VAR_REGION=eu\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     class Result:
         returncode = 0
         stderr = ""
-        stdout = "CONFIGURED\n"
+        def __init__(self, stdout: str) -> None:
+            self.stdout = stdout
 
     def fake_run(command: list[str], **kwargs: object) -> Result:
         calls.append(command)
-        return Result()
+        return Result("CONFIGURED\nORPHAN\n" if command[1] == "secret" else "MIGRATED\n")
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
 
-    assert missing_remote_secrets(env, "owner/repo") == ["MISSING"]
-    assert calls == [["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"]]
+    assert remote_secret_status(env, "owner/repo") == (["MISSING"], ["MIGRATED"], ["ORPHAN"])
+    assert calls == [
+        ["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
+        ["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
+    ]
 
 
 def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> None:

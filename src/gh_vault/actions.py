@@ -80,13 +80,19 @@ def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int
     return target, imported
 
 
-def missing_remote_secrets(env_file: Path, repo: str) -> list[str]:
+def remote_secret_status(env_file: Path, repo: str) -> tuple[list[str], list[str], list[str]]:
     local = {
         key.removeprefix("GH_SECRET_")
         for key in parse_dotenv(env_file)
         if key.startswith("GH_SECRET_") and key.removeprefix("GH_SECRET_") and not RESERVED.fullmatch(key.removeprefix("GH_SECRET_"))
     }
-    return sorted(local - _remote_names("secret", repo))
+    remote_secrets = _remote_names("secret", repo)
+    missing = local - remote_secrets
+    unset_locally = sorted(remote_secrets - local)
+    if not missing:
+        return [], [], unset_locally
+    migrated = sorted(missing & _remote_names("variable", repo))
+    return sorted(missing - set(migrated)), migrated, unset_locally
 
 
 def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bool = False) -> int:

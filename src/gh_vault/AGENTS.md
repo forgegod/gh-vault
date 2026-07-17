@@ -28,7 +28,7 @@ Production package for storing named GitHub tokens and project environment archi
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.
 - Environment archives require `remote.origin.url`, refuse to overwrite `.env` without `--force`, and reconstruct comments from `.env.example`.
 - Actions sync accepts only `GH_SECRET_*` and `GH_VAR_*` values and sends them to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type.
-- `secrets check` verifies every declared `GH_SECRET_*` name exists on GitHub without modifying `.env`. `variables import` reads repository variables with `gh variable list`, writes them as `GH_VAR_*` entries to `.env` or (when absent) `.env.example`, and replaces matching entries only with `--force`.
+- `secrets check` verifies `GH_SECRET_*` names in both `.env` and GitHub without modifying `.env`; names present as GitHub Variables are successful migrations reported as `NAME -> GH_VAR_NAME`, while remote-only secrets are reported as unset in `.env`. `variables import` reads repository variables with `gh variable list`, writes them as `GH_VAR_*` entries to `.env` or (when absent) `.env.example`, and replaces matching entries only with `--force`.
 
 ## Work Guidance
 

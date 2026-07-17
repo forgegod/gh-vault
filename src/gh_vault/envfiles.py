@@ -18,14 +18,16 @@ def project_namespace(directory: Path) -> tuple[str, str]:
     origin = result.stdout.strip()
     if result.returncode or not origin:
         raise StoreError("origin remote is required; run this command in a checkout with remote.origin.url")
-    if match := SCP_URL.fullmatch(origin):
+    if "://" not in origin and (match := SCP_URL.fullmatch(origin)):
         host, path = match["host"], match["path"]
     else:
         parsed = urlparse(origin)
+        if parsed.scheme not in {"http", "https", "ssh"} or parsed.query or parsed.fragment or parsed.params:
+            raise StoreError("origin URL cannot be represented as a safe project namespace")
         host, path = parsed.hostname or "", parsed.path.lstrip("/")
     path = path.removesuffix(".git")
-    parts = [part for part in path.split("/") if part]
-    if not re.fullmatch(r"[A-Za-z0-9.-]+", host or "") or not parts or any(not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in parts):
+    parts = path.split("/")
+    if not re.fullmatch(r"[A-Za-z0-9.-]+", host or "") or not parts or any(part in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in parts):
         raise StoreError("origin URL cannot be represented as a safe project namespace")
     return f"{host.lower()}/{'/'.join(parts)}", origin
 
@@ -74,7 +76,10 @@ def _decode(value: str, parent: Path, path: Path, number: int) -> str:
             return json.loads(value)
         except json.JSONDecodeError as exc:
             raise StoreError(f"invalid double quote escape at {path}:{number}") from exc
-    return value.split(" #", 1)[0].rstrip()
+    value = value.split(" #", 1)[0].rstrip()
+    if "$(" in value or "${" in value or "`" in value:
+        raise StoreError(f"unsupported dotenv syntax at {path}:{number}")
+    return value
 
 
 def format_dotenv_value(value: str) -> str:

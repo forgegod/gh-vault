@@ -3,8 +3,11 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+import pytest
+
 from gh_vault.actions import ActionValue, action_values, check_workflows, export_act, sync
-from gh_vault.envfiles import archive_environment, project_namespace, restore_environment
+from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
+from gh_vault.store import StoreError
 
 
 class MemoryVault:
@@ -24,6 +27,67 @@ def test_project_namespace_normalizes_ssh_origin(monkeypatch, tmp_path: Path) ->
         stdout = "git@github.com:owner/repo.git\n"
     monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
     assert project_namespace(tmp_path) == ("github.com/owner/repo", "git@github.com:owner/repo.git")
+
+
+@pytest.mark.parametrize(
+    "origin, expected",
+    [
+        ("https://github.com/owner/repo.git\n", "github.com/owner/repo"),
+        ("ssh://git@github.com/owner/repo.git\n", "github.com/owner/repo"),
+    ],
+)
+def test_project_namespace_normalizes_url_origins(monkeypatch, tmp_path: Path, origin: str, expected: str) -> None:
+    class Result:
+        returncode = 0
+        stdout = origin
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert project_namespace(tmp_path) == (expected, origin.strip())
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://github.com/owner//repo.git\n",
+        "https://github.com/owner/repo.git?ref=main\n",
+        "git@github.com:owner/../repo.git\n",
+    ],
+)
+def test_project_namespace_rejects_unsafe_origins(monkeypatch, tmp_path: Path, origin: str) -> None:
+    class Result:
+        returncode = 0
+        stdout = origin
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+
+    with pytest.raises(StoreError, match="safe project namespace"):
+        project_namespace(tmp_path)
+
+
+def test_parse_dotenv_decodes_explicit_values_without_sourcing(tmp_path: Path) -> None:
+    payload = tmp_path / "payload.txt"
+    payload.write_text("from-file\n", encoding="utf-8")
+    env = tmp_path / ".env"
+    env.write_text(
+        "PLAIN=value # comment\nQUOTED=\"two words\"\nFILE=@file:payload.txt\nMULTILINE=@base64:bGluZTEKbGluZTI=\n",
+        encoding="utf-8",
+    )
+
+    assert parse_dotenv(env) == {
+        "PLAIN": "value",
+        "QUOTED": "two words",
+        "FILE": "from-file\n",
+        "MULTILINE": "line1\nline2",
+    }
+
+
+def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("VALUE=$(printf unsafe)\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="unsupported dotenv syntax"):
+        parse_dotenv(env)
 
 
 def test_archive_and_restore_uses_template_comments(monkeypatch, tmp_path: Path) -> None:

@@ -63,14 +63,18 @@ def _read_token(use_stdin: bool) -> str:
 
 def _add(store: VaultStore, args: argparse.Namespace) -> int:
     token = _read_token(args.stdin)
+    validated = True
     try:
         metadata = inspect_token(token)
     except StoreError:
         if args.scopes is None:
             raise
+        validated = False
         metadata = TokenMetadata((), None)
     scopes = metadata.scopes if args.scopes is None else args.scopes
     store.put(Profile(args.name, scopes, args.note, metadata.expires_at), token, replace=args.force)
+    if validated:
+        print(f"Validated GitHub token: scopes={','.join(metadata.scopes) or '-'}{f' expires={metadata.expires_at}' if metadata.expires_at else ''}")
     print(f"Stored profile: {args.name}")
     return 0
 

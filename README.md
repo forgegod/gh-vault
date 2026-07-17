@@ -30,7 +30,7 @@ Read a token from standard input for automation:
 printf '%s' "$TOKEN" | gh-vault add ci --stdin
 ```
 
-When `--scopes` is omitted, `add` makes one authenticated request to `https://api.github.com/user`. Classic PATs expose their granted scopes in `X-OAuth-Scopes`; GitHub supplies an expiration timestamp in `GitHub-Authentication-Token-Expiration` when one exists. Fine-grained tokens do not expose classic scopes, so their scope list remains empty. `--scopes` retains manual metadata while `add` still records an expiration when GitHub provides it. `gh-vault list` displays the saved expiration.
+When `--scopes` is omitted, `add` makes one authenticated request to `https://api.github.com/user`; a successful response validates the token and prints its discovered scopes plus its expiration when available. Classic PATs expose their granted scopes in `X-OAuth-Scopes`; GitHub supplies an expiration timestamp in `GitHub-Authentication-Token-Expiration` when one exists. Fine-grained tokens do not expose classic scopes, so their scope list remains empty. `--scopes` retains manual metadata while `add` still records an expiration when GitHub provides it. `gh-vault list` displays the saved expiration.
 
 ## Project environment archive
 

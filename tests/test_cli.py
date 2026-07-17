@@ -59,7 +59,7 @@ def test_add_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, ca
         "token": "token-value",
         "replace": False,
     }
-    assert capsys.readouterr().out == "Stored profile: release\n"
+    assert capsys.readouterr().out == "Validated GitHub token: scopes=repo,workflow expires=2026-12-31 23:59:59 UTC\nStored profile: release\n"
 
 
 def test_add_preserves_expiration_with_manual_scopes(monkeypatch: pytest.MonkeyPatch) -> None:

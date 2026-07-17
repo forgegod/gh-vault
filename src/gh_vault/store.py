@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 STORE_PREFIX = "gh-vault"
-LEGACY_STORE_PREFIX = "github-token-safe"
+
 
 
 class StoreError(RuntimeError):
@@ -130,25 +130,6 @@ class VaultStore:
     def remove_secret(self, name: str) -> None:
         self._run(["rm", "--force", self._entry(name)], None, f"remove '{name}'")
 
-    def migrate_legacy(self) -> int:
-        legacy_config = self.config_dir.parent / LEGACY_STORE_PREFIX / "config.json"
-        try:
-            legacy = json.loads(legacy_config.read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            raise StoreError(f"legacy metadata not found: {legacy_config}") from exc
-        if self.load()["profiles"]:
-            raise StoreError("current vault already has profiles; migrate into an empty vault")
-        profiles = legacy.get("profiles")
-        if not isinstance(profiles, dict):
-            raise StoreError(f"invalid legacy config file: {legacy_config}")
-        for name, metadata in profiles.items():
-            token = self._run(["show", f"{LEGACY_STORE_PREFIX}/{name}"], None, f"load legacy '{name}'").rstrip("\n")
-            if not token:
-                raise StoreError(f"legacy profile '{name}' has no token")
-            self.put_secret(name, token)
-        data = {"active": legacy.get("active"), "profiles": profiles}
-        self.save(data)
-        return len(profiles)
 
     def _run(self, args: list[str], input_value: str | None, action: str) -> str:
         self.require_backend()

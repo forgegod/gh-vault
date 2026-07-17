@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     remove = commands.add_parser("remove", help="delete a profile"); remove.add_argument("name", type=profile_name)
     run = commands.add_parser("run", help="run a command with a token"); run.add_argument("--name", type=profile_name); run.add_argument("program", nargs=argparse.REMAINDER)
     credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol"); credential.add_argument("operation", choices=("get", "store", "erase"))
-    commands.add_parser("migrate", help="copy legacy github-token-safe profiles")
+
     env = commands.add_parser("env", help="archive or restore project environment files").add_subparsers(dest="env_command", required=True)
     for name in ("archive", "restore"):
         command = env.add_parser(name); command.add_argument("--env-file", type=Path, default=Path(".env")); command.add_argument("--example-file", type=Path, default=Path(".env.example"))
@@ -100,7 +100,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "remove": store.remove(args.name); print(f"Removed profile: {args.name}"); return 0
     if args.command == "run": return _run(store, args.name, args.program)
     if args.command == "git-credential": return _git_credential(store, args.operation)
-    if args.command == "migrate": print(f"Migrated {store.migrate_legacy()} legacy profile(s)."); return 0
+
     if args.command == "env":
         if args.env_command == "archive": print(f"Archived environment for {archive_environment(store, directory, args.env_file, args.example_file)}.")
         else: print(f"Restored environment for {restore_environment(store, directory, args.env_file, args.example_file, args.force, args.restore_example)}.")

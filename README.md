@@ -14,16 +14,6 @@ pass init YOUR_GPG_KEY_ID
 uv tool install --editable .
 ```
 
-## Migrate from github-token-safe
-
-Install `gh-vault`, then copy existing profiles and encrypted entries. The source data is retained.
-
-```sh
-gh-vault migrate
-```
-
-The public command and `pass` namespace are now `gh-vault`; no old command alias is retained.
-
 ## Tokens and Git credentials
 
 ```sh

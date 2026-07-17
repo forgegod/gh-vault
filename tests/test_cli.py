@@ -43,6 +43,11 @@ def test_parser_uses_public_command_name() -> None:
     assert cli.build_parser().prog == "gh-vault"
 
 
+def test_parser_rejects_removed_legacy_migration_command() -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["migrate"])
+
+
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli._list(MemoryStore()) == 0  # type: ignore[arg-type]
     output = capsys.readouterr().out

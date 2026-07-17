@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320"
+  role="img" aria-labelledby="title desc">
+  <title id="title">gh-vault mark</title>
+  <desc id="desc">An octagonal vault door with a Git branch locking mechanism and keyhole</desc>
+  <defs>
+    <clipPath id="gh-vault-mark-mark-band">
+      <rect x="0" y="154.000" width="240" height="22.000"/>
+    </clipPath>
+  </defs>
+  <g transform="translate(40 40) scale(1.0)">
+    <path d="M72 18H168L222 72V168L168 222H72L18 168V72Z" fill="#ca1a0f"/>
+    <path d="M72 18H168L222 72V168L168 222H72L18 168V72Z" fill="#ff6a3d" clip-path="url(#gh-vault-mark-mark-band)"/>
+    <path d="M120 48A72 72 0 1 1 119.9 48Z" fill="none" stroke="#7a0d06" stroke-width="12"/>
+    <path d="M120 80V154M120 112H78V82M120 126H164V96" fill="none" stroke="#7a0d06" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="78" cy="76" r="13" fill="#7a0d06"/>
+    <circle cx="164" cy="90" r="13" fill="#7a0d06"/>
+    <circle cx="120" cy="73" r="13" fill="#7a0d06"/>
+    <path d="M120 143A15 15 0 0 1 130 169L136 197H104L110 169A15 15 0 0 1 120 143Z" fill="#120706"/>
+    <circle cx="120" cy="159" r="8" fill="#ff6a3d"/>
+  </g>
+</svg>

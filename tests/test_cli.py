@@ -123,6 +123,27 @@ def test_set_with_manual_scopes_allows_unavailable_inspection(monkeypatch: pytes
     assert captured["profile"] == Profile("release", ("read:org",))
 
 
+def test_env_run_maps_actions_values_with_secret_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["env", "run", "--", "program", "argument"])
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cli, "runtime_environment", lambda path: {"REGION": "secret-region", "TOKEN": "secret-token", "LOCAL_ONLY": "local"})
+    monkeypatch.setattr(cli.os, "execvpe", lambda program, arguments, environment: captured.update(program=program, arguments=arguments, environment=environment))
+
+    assert cli.dispatch(args, MemoryStore()) == 127  # type: ignore[arg-type]
+    assert captured["program"] == "program"
+    assert captured["arguments"] == ["program", "argument"]
+    assert captured["environment"]["REGION"] == "secret-region"  # type: ignore[index]
+    assert captured["environment"]["TOKEN"] == "secret-token"  # type: ignore[index]
+    assert captured["environment"]["LOCAL_ONLY"] == "local"  # type: ignore[index]
+
+
+def test_env_run_requires_an_explicit_command_separator() -> None:
+    args = cli.build_parser().parse_args(["env", "run", "program"])
+    with pytest.raises(StoreError, match="after --"):
+        cli.dispatch(args, MemoryStore())  # type: ignore[arg-type]
+
+
 def test_parser_rejects_removed_legacy_migration_command() -> None:
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["migrate"])

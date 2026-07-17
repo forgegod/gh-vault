@@ -40,9 +40,10 @@ An archive is identified by the normalized `remote.origin.url` namespace. Values
 # Run in the project checkout
 gh-vault env archive
 gh-vault env restore
+gh-vault env run -- ./scripts/report.sh
 ```
 
-Restore refuses to overwrite an existing `.env`; use `--force` after reviewing it. It uses the checkout's current `.env.example`; add `--restore-example` to restore the archived template too.
+Restore refuses to overwrite an existing `.env`; use `--force` after reviewing it. It uses the checkout's current `.env.example`; add `--restore-example` to restore the archived template too. `env run -- <command> ...` injects parsed local values and maps `GH_VAR_<KEY>` / `GH_SECRET_<KEY>` to `<KEY>`; a Secret wins when both prefixes declare the same key. It uses the conservative dotenv parser rather than sourcing the file, so quoted values and valid double-quote escapes are decoded without shell evaluation.
 
 Only conservative dotenv syntax is accepted: assignments, quoted values, and explicit `@file:` / `@base64:` values. Shell evaluation is deliberately unsupported.
 

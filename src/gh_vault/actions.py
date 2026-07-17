@@ -60,6 +60,18 @@ def action_values(env_file: Path) -> list[ActionValue]:
     return entries
 
 
+def runtime_environment(env_file: Path) -> dict[str, str]:
+    values = parse_dotenv(env_file)
+    environment = {key: value for key, value in values.items() if not key.startswith(("GH_VAR_", "GH_SECRET_"))}
+    for prefix in ("GH_VAR_", "GH_SECRET_"):
+        for key, value in values.items():
+            if key.startswith(prefix):
+                name = key.removeprefix(prefix)
+                if name and not RESERVED.fullmatch(name):
+                    environment[name] = value
+    return environment
+
+
 def _remote_names(kind: str, repo: str) -> set[str]:
     result = subprocess.run(
         ["gh", kind, "list", "--repo", repo, "--json", "name", "--jq", ".[].name"],

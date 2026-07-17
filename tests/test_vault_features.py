@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, sync
+from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, runtime_environment, sync
 from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
@@ -81,6 +81,13 @@ def test_parse_dotenv_decodes_explicit_values_without_sourcing(tmp_path: Path) -
         "FILE": "from-file\n",
         "MULTILINE": "line1\nline2",
     }
+
+
+def test_runtime_environment_injects_local_values_and_secret_precedence(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("LOCAL_ONLY='literal\\ntext'\nESCAPED=\"line\\nbreak\"\nGH_VAR_REGION=eu\nGH_SECRET_REGION=secret-region\n", encoding="utf-8")
+
+    assert runtime_environment(env) == {"LOCAL_ONLY": "literal\\ntext", "ESCAPED": "line\nbreak", "REGION": "secret-region"}
 
 
 def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:

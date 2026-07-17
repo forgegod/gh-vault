@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, suggested_env, sync
+from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, runtime_environment, suggested_env, sync
 from .envfiles import archive_environment, restore_environment
 from .github import TokenMetadata, inspect_token
 from .store import Profile, StoreError, VaultStore
@@ -38,10 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="run a command with a token", description="Run a child command with the selected token in its environment only."); run.add_argument("--name", type=profile_name, help="profile name; defaults to the active profile"); run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
     credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol", description="Serve Git's credential-helper protocol for HTTPS requests to github.com only."); credential.add_argument("operation", choices=("get", "store", "erase"), help="Git credential-helper operation")
 
-    env = commands.add_parser("env", help="archive or restore project environment files", description="Archive or restore a project .env file and its .env.example template.").add_subparsers(dest="env_command", required=True)
+    env = commands.add_parser("env", help="archive, restore, or run with project environment values", description="Archive or restore a project .env file and its .env.example template, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     for name, description in (("archive", "Encrypt the current project environment and template into the active vault."), ("restore", "Restore a project environment and template from the active vault.")):
         command = env.add_parser(name, help=description, description=description); command.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); command.add_argument("--example-file", type=Path, default=Path(".env.example"), help="environment template path")
     env.choices["restore"].add_argument("--force", action="store_true", help="overwrite an existing environment file"); env.choices["restore"].add_argument("--restore-example", action="store_true", help="restore the archived template")
+    env_run = env.add_parser("run", help="run a command with project environment values", description="Run a command with parsed local values and GH_VAR_ / GH_SECRET_ values mapped to unprefixed names; Secrets override Variables."); env_run.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); env_run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
     secrets = commands.add_parser("secrets", help="sync or export GH_SECRET_/GH_VAR_ entries", description="Synchronize, export, or verify .env values intended for GitHub Actions.").add_subparsers(dest="secrets_command", required=True)
     sync_parser = secrets.add_parser("sync", help="sync declared Actions values to GitHub", description="Set GH_SECRET_ entries as GitHub Secrets and GH_VAR_ entries as GitHub Variables."); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
     act = secrets.add_parser("export-act", help="export declared Actions values for act", description="Write GH_SECRET_ values to .secrets and GH_VAR_ values to .vars for local act runs."); act.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); act.add_argument("--output", type=Path, default=Path(".secrets"), help="output path for secrets"); act.add_argument("--var-output", type=Path, default=Path(".vars"), help="output path for variables")
@@ -103,6 +104,17 @@ def _run(store: VaultStore, name: str | None, program: list[str]) -> int:
     return 127
 
 
+def _env_run(env_file: Path, program: list[str]) -> int:
+    if not program or program[0] != "--": raise StoreError("env run requires a command after --")
+    program = program[1:]
+    if not program: raise StoreError("env run requires a command after --")
+    environment = os.environ.copy()
+    environment.update(runtime_environment(env_file))
+    try: os.execvpe(program[0], program, environment)
+    except FileNotFoundError as exc: raise StoreError(f"command not found: {program[0]}") from exc
+    return 127
+
+
 def _credential_host(fields: dict[str, str]) -> str:
     return fields.get("host", "").split(":", 1)[0].lower() or (urlparse(fields.get("url", "")).hostname or "").lower()
 
@@ -125,7 +137,8 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
 
     if args.command == "env":
         if args.env_command == "archive": print(f"Archived environment for {archive_environment(store, directory, args.env_file, args.example_file)}.")
-        else: print(f"Restored environment for {restore_environment(store, directory, args.env_file, args.example_file, args.force, args.restore_example)}.")
+        elif args.env_command == "restore": print(f"Restored environment for {restore_environment(store, directory, args.env_file, args.example_file, args.force, args.restore_example)}.")
+        else: return _env_run(args.env_file, args.program)
         return 0
     if args.command == "secrets":
         if args.secrets_command == "check":

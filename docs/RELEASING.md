@@ -11,7 +11,7 @@ A PyPI account and an API token scoped to the `gh-vault` project (or account-wid
 uv publish --token PYPI_API_TOKEN    # placeholder; set the env var instead
 ```
 
-Prefer the `UV_PUBLISH_TOKEN` environment variable and avoid storing the token on disk. `gh-vault secrets sync` can keep the value in `pass` for this repo if you maintain it locally.
+Prefer the `UV_PUBLISH_TOKEN` environment variable and avoid storing the token on disk. `gh-vault secret sync` can keep the value in `pass` for this repo if you maintain it locally.
 
 ## Publish a release
 

@@ -217,44 +217,57 @@ gh-vault env migrate --env-file .env
 
 ```sh
 # Preview without changes
-gh-vault secrets sync --dry-run
+gh-vault secret sync --dry-run
 
 # Set all typed declarations in their selected GitHub stores
-gh-vault secrets sync
+gh-vault secret sync
 
 # Resolve type mismatches: remove opposite-type remote value, then set declared type
-gh-vault secrets sync --migrate-types
+gh-vault secret sync --migrate-types
 
 # Remove remote values absent from .env (leaves same-name opposite types alone)
-gh-vault secrets sync --prune
+gh-vault secret sync --prune
 
 # Target a specific repository (defaults to origin)
-gh-vault secrets sync --repo owner/repo
+gh-vault secret sync --repo owner/repo
 ```
 
 Ordinary sync creates or updates remote Secrets and Variables but never deletes. `--migrate-types` handles type changes: if `API_KEY` has a `secret` directive but a GitHub Variable of that name exists, it removes the Variable first, then sets the Secret. `--prune` removes remote Secrets and Variables whose names have no typed local declaration; it deliberately leaves same-name opposite types alone and cannot be combined with `--migrate-types`. `--dry-run` reports the count of what would be synced or pruned without touching GitHub.
 
 ### Check local declarations against GitHub
 
+`secret check` and `variable check` are independent and scoped to their own GitHub Actions type. Each one is nonzero-exit until every finding in its scope is resolved and never modifies `.env`.
+
 ```sh
-gh-vault secrets check
-gh-vault secrets check --repo owner/repo
+# Local secret declarations vs. GitHub Secrets only
+gh-vault secret check
+gh-vault secret check --repo owner/repo
+
+# Local variable declarations vs. GitHub Variables only
+gh-vault variable check
+gh-vault variable check --repo owner/repo
 ```
 
-Compares every typed declaration against both GitHub Actions stores. The adjacent directive is authoritative, so a GitHub Variable for a local `secret` declaration is reported as type drift and vice versa. Reports four categories, all nonzero-exit until resolved:
+`secret check` reports three categories, all nonzero-exit until resolved:
 
-- Missing secrets or variables (declared locally, absent on GitHub)
-- Remote-only values (exist on GitHub but not in `.env`)
+- Missing secrets (declared locally, absent on GitHub)
+- Remote-only secrets (exist on GitHub but not in `.env`)
 - Secret-to-variable drift (declared as Secret locally, exists as Variable remotely)
+
+`variable check` reports three categories, all nonzero-exit until resolved:
+
+- Missing variables (declared locally, absent on GitHub)
+- Remote-only variables (exist on GitHub but not in `.env`)
 - Variable-to-secret drift (declared as Variable locally, exists as Secret remotely)
 
-Never modifies `.env`.
+Findings for the opposite type belong to the other command; they do not affect the current command's exit code.
 
 Before pushing changes that affect Actions declarations, run this remote review sequence:
 
 ```sh
-gh-vault secrets sync --dry-run
-gh-vault secrets check
+gh-vault secret sync --dry-run
+gh-vault secret check
+gh-vault variable check
 ```
 
 Local commits use `gh-vault workflow check` as the offline wiring gate; remote secret checks are not a local-commit prerequisite.
@@ -265,22 +278,22 @@ Changing a directive changes both archive storage and GitHub synchronization eli
 
 | Source | Target | Exact directive edit | Resulting archive | Archive command | GitHub behavior and follow-up |
 |---|---|---|---|---|---|
-| `secret` | `secret` | Keep `# gh-vault: secret`; edit value only | Encrypted `pass` payload | `gh-vault env archive` | Ordinary `gh-vault secrets sync` updates it |
-| `variable` | `variable` | Keep `# gh-vault: variable`; edit value only | Public XDG payload | `gh-vault env archive` | Ordinary `gh-vault secrets sync` updates it |
+| `secret` | `secret` | Keep `# gh-vault: secret`; edit value only | Encrypted `pass` payload | `gh-vault env archive` | Ordinary `gh-vault secret sync` updates it |
+| `variable` | `variable` | Keep `# gh-vault: variable`; edit value only | Public XDG payload | `gh-vault env archive` | Ordinary `gh-vault secret sync` updates it |
 | local-only | local-only | Keep no directive; edit value only | No gh-vault archive | `gh-vault env archive` removes any stale archive | Remote values are untouched |
-| `secret` | `variable` | Replace `secret` with `variable` | Public XDG payload; stale encrypted payload removed after verification | `gh-vault env archive` | Run `secrets sync --dry-run`, then `secrets sync --migrate-types` |
-| `variable` | `secret` | Replace `variable` with `secret` | Encrypted `pass` payload; stale public payload removed after verification | `gh-vault env archive` | Run `secrets sync --dry-run`, then `secrets sync --migrate-types` |
-| local-only | `secret` | Add `# gh-vault: secret` immediately above the assignment | Encrypted `pass` payload | `gh-vault env archive` | Review with `secrets sync --dry-run`, then ordinary `secrets sync` |
-| local-only | `variable` | Add `# gh-vault: variable` immediately above the assignment | Public XDG payload | `gh-vault env archive` | Review with `secrets sync --dry-run`, then ordinary `secrets sync` |
-| `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secrets sync --prune`, run the full pre-push review sequence above |
-| `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secrets sync --prune`, run the full pre-push review sequence above |
+| `secret` | `variable` | Replace `secret` with `variable` | Public XDG payload; stale encrypted payload removed after verification | `gh-vault env archive` | Run `secret sync --dry-run`, then `secret sync --migrate-types` |
+| `variable` | `secret` | Replace `variable` with `secret` | Encrypted `pass` payload; stale public payload removed after verification | `gh-vault env archive` | Run `secret sync --dry-run`, then `secret sync --migrate-types` |
+| local-only | `secret` | Add `# gh-vault: secret` immediately above the assignment | Encrypted `pass` payload | `gh-vault env archive` | Review with `secret sync --dry-run`, then ordinary `secret sync` |
+| local-only | `variable` | Add `# gh-vault: variable` immediately above the assignment | Public XDG payload | `gh-vault env archive` | Review with `secret sync --dry-run`, then ordinary `secret sync` |
+| `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secret sync --prune`, run the full pre-push review sequence above |
+| `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secret sync --prune`, run the full pre-push review sequence above |
 
 ### Import repository Variables into `.env`
 
 ```sh
-gh-vault variables import
-gh-vault variables import --repo owner/repo
-gh-vault variables import --force    # overwrite existing variable declarations
+gh-vault variable import
+gh-vault variable import --repo owner/repo
+gh-vault variable import --force    # overwrite existing variable declarations
 ```
 
 Reads repository variables via `gh variable list` and writes standard keys with `# gh-vault: variable` directives. Targets `.env` when it exists, otherwise writes commented assignments in `.env.example`. Existing entries are retained unless `--force` is supplied; force overwrites only an existing `variable` declaration and refuses to reclassify a secret or local-only key.
@@ -293,7 +306,7 @@ gh-vault run-act -- act workflow_dispatch
 
 `run-act` creates separate secret and variable files in a mode-`0700` temporary directory, appends `--secret-file` and `--var-file` to the supplied `act` command, and removes the files after success or child failure. Both files always exist at mode `0600`, even when empty. Unmarked local values are excluded. Supplying either managed file flag manually is rejected. `SIGKILL` or a host crash can prevent normal cleanup.
 
-`gh-vault secrets export-act` remains available when explicit persistent `.secrets` and `.vars` files are required. Multi-line values use the `@base64:` prefix understood by [act](https://github.com/nektos/act).
+`gh-vault secret export-act` remains available when explicit persistent `.secrets` and `.vars` files are required. Multi-line values use the `@base64:` prefix understood by [act](https://github.com/nektos/act).
 
 ### Validate workflow wiring
 

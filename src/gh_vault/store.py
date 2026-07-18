@@ -118,7 +118,7 @@ class VaultStore:
         self._run(["insert", "--force", "--multiline", self._entry(name)], value + "\n", "store")
 
     def get_secret(self, name: str) -> str:
-        return self._run(["show", self._entry(name)], None, f"load '{name}'").rstrip("\n")
+        return self._run(["show", self._entry(name)], None, f"load '{name}'").removesuffix("\n")
 
     def remove_secret(self, name: str) -> None:
         self._run(["rm", "--force", self._entry(name)], None, f"remove '{name}'")

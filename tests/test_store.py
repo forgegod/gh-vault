@@ -28,7 +28,7 @@ data = json.loads(path.read_text()) if path.exists() else {}
 command = sys.argv[1]
 key = sys.argv[-1]
 if command == "insert":
-    data[key] = sys.stdin.read().rstrip("\\n")
+    data[key] = sys.stdin.read().removesuffix("\\n")
     path.write_text(json.dumps(data))
 elif command == "show":
     if key not in data:
@@ -73,6 +73,12 @@ def test_add_select_get_and_remove(store: VaultStore) -> None:
     store.remove("release")
     assert store.active() is None
     assert [profile.name for profile in store.profiles()] == ["repo-read"]
+
+
+def test_secret_round_trip_preserves_trailing_newlines(store: VaultStore) -> None:
+    store.put_secret("projects/github.com/owner/repo/env.example", "template\n")
+
+    assert store.get_secret("projects/github.com/owner/repo/env.example") == "template\n"
 
 
 def test_config_permissions_are_restrictive(store: VaultStore) -> None:

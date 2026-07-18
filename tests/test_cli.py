@@ -71,6 +71,7 @@ def test_add_command_is_removed() -> None:
         (["secret", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
         (["secret", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
         (["secret", "check", "--help"], "Compare typed gh-vault secret declarations with GitHub Secrets"),
+        (["variable", "sync", "--help"], "Set gh-vault variable declarations as GitHub Variables"),
         (["variable", "import", "--help"], "Import repository Variables with gh-vault variable directives"),
         (["variable", "check", "--help"], "Compare typed gh-vault variable declarations with GitHub Variables"),
         (["workflow", "check", "--help"], "Report missing, mismatched, and unreferenced"),
@@ -283,9 +284,10 @@ def test_secret_sync_dispatches_only_secret_entries(monkeypatch: pytest.MonkeyPa
         ],
     )
 
-    def fake_sync(entries, repo, dry_run, migrate_types=False, prune=False):
+    def fake_sync(entries, repo, kind, dry_run, migrate_types=False, prune=False):
         captured["entries"] = [(entry.name, entry.kind) for entry in entries]
         captured["repo"] = repo
+        captured["kind"] = kind
         captured["dry_run"] = dry_run
         captured["prune"] = prune
         captured["migrate_types"] = migrate_types
@@ -295,7 +297,7 @@ def test_secret_sync_dispatches_only_secret_entries(monkeypatch: pytest.MonkeyPa
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
     assert captured["entries"] == [("API_KEY", "secret")]
-    assert captured["repo"] == "github.com/owner/repo"
+    assert captured["kind"] == "secret"
     assert captured["dry_run"] is True
     assert captured["prune"] is True
     assert captured["migrate_types"] is False
@@ -315,14 +317,16 @@ def test_variable_sync_dispatches_only_variable_entries(monkeypatch: pytest.Monk
         ],
     )
 
-    def fake_sync(entries, repo, dry_run, migrate_types=False, prune=False):
+    def fake_sync(entries, repo, kind, dry_run, migrate_types=False, prune=False):
         captured["entries"] = [(entry.name, entry.kind) for entry in entries]
+        captured["kind"] = kind
         return SyncResult(2, 4)
 
     monkeypatch.setattr(cli, "sync", fake_sync)
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
     assert captured["entries"] == [("REGION", "variable")]
+    assert captured["kind"] == "variable"
     assert capsys.readouterr().out == "Would sync 2 variable(s); would prune 4 variable(s).\n"
 
 

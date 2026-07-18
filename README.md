@@ -215,24 +215,25 @@ gh-vault env migrate --env-file .env
 
 ### Sync declared values to GitHub
 
+`secret sync` and `variable sync` are independent and each set only their own GitHub Actions store. `--prune` and `--migrate-types` are mutually exclusive on each command.
+
 ```sh
-# Preview without changes
+# Secret side: preview, set, migrate, prune
 gh-vault secret sync --dry-run
-
-# Set all typed declarations in their selected GitHub stores
 gh-vault secret sync
-
-# Resolve type mismatches: remove opposite-type remote value, then set declared type
 gh-vault secret sync --migrate-types
-
-# Remove remote values absent from .env (leaves same-name opposite types alone)
 gh-vault secret sync --prune
-
-# Target a specific repository (defaults to origin)
 gh-vault secret sync --repo owner/repo
+
+# Variable side: matching options for the Variables store
+gh-vault variable sync --dry-run
+gh-vault variable sync
+gh-vault variable sync --migrate-types
+gh-vault variable sync --prune
+gh-vault variable sync --repo owner/repo
 ```
 
-Ordinary sync creates or updates remote Secrets and Variables but never deletes. `--migrate-types` handles type changes: if `API_KEY` has a `secret` directive but a GitHub Variable of that name exists, it removes the Variable first, then sets the Secret. `--prune` removes remote Secrets and Variables whose names have no typed local declaration; it deliberately leaves same-name opposite types alone and cannot be combined with `--migrate-types`. `--dry-run` reports the count of what would be synced or pruned without touching GitHub.
+`secret sync` creates or updates only GitHub Secrets and never touches GitHub Variables. `variable sync` creates or updates only GitHub Variables and never touches GitHub Secrets. On either side, ordinary sync never deletes. `--migrate-types` resolves a type change in one direction only: `secret sync --migrate-types` removes a same-name GitHub Variable before setting the Secret, and `variable sync --migrate-types` removes a same-name GitHub Secret before setting the Variable. `--prune` removes remote values in the target store whose names have no typed local declaration; same-name opposite-type local declarations protect their remote counterpart. `--dry-run` reports counts without touching GitHub.
 
 ### Check local declarations against GitHub
 
@@ -262,15 +263,17 @@ gh-vault variable check --repo owner/repo
 
 Findings for the opposite type belong to the other command; they do not affect the current command's exit code.
 
-Before pushing changes that affect Actions declarations, run this remote review sequence:
+Before pushing changes that affect Actions declarations, run the matching remote review sequence for each touched type. Local commits use `gh-vault workflow check` as the offline wiring gate; remote secret/variable checks are not a local-commit prerequisite.
 
 ```sh
+# Secret-side changes
 gh-vault secret sync --dry-run
 gh-vault secret check
+
+# Variable-side changes (run alongside the secret pair when both types moved)
+gh-vault variable sync --dry-run
 gh-vault variable check
 ```
-
-Local commits use `gh-vault workflow check` as the offline wiring gate; remote secret checks are not a local-commit prerequisite.
 
 ### Type transitions
 
@@ -279,14 +282,14 @@ Changing a directive changes both archive storage and GitHub synchronization eli
 | Source | Target | Exact directive edit | Resulting archive | Archive command | GitHub behavior and follow-up |
 |---|---|---|---|---|---|
 | `secret` | `secret` | Keep `# gh-vault: secret`; edit value only | Encrypted `pass` payload | `gh-vault env archive` | Ordinary `gh-vault secret sync` updates it |
-| `variable` | `variable` | Keep `# gh-vault: variable`; edit value only | Public XDG payload | `gh-vault env archive` | Ordinary `gh-vault secret sync` updates it |
+| `variable` | `variable` | Keep `# gh-vault: variable`; edit value only | Public XDG payload | `gh-vault env archive` | Ordinary `gh-vault variable sync` updates it |
 | local-only | local-only | Keep no directive; edit value only | No gh-vault archive | `gh-vault env archive` removes any stale archive | Remote values are untouched |
-| `secret` | `variable` | Replace `secret` with `variable` | Public XDG payload; stale encrypted payload removed after verification | `gh-vault env archive` | Run `secret sync --dry-run`, then `secret sync --migrate-types` |
+| `secret` | `variable` | Replace `secret` with `variable` | Public XDG payload; stale encrypted payload removed after verification | `gh-vault env archive` | Run `variable sync --dry-run`, then `variable sync --migrate-types` |
 | `variable` | `secret` | Replace `variable` with `secret` | Encrypted `pass` payload; stale public payload removed after verification | `gh-vault env archive` | Run `secret sync --dry-run`, then `secret sync --migrate-types` |
 | local-only | `secret` | Add `# gh-vault: secret` immediately above the assignment | Encrypted `pass` payload | `gh-vault env archive` | Review with `secret sync --dry-run`, then ordinary `secret sync` |
-| local-only | `variable` | Add `# gh-vault: variable` immediately above the assignment | Public XDG payload | `gh-vault env archive` | Review with `secret sync --dry-run`, then ordinary `secret sync` |
-| `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secret sync --prune`, run the full pre-push review sequence above |
-| `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secret sync --prune`, run the full pre-push review sequence above |
+| local-only | `variable` | Add `# gh-vault: variable` immediately above the assignment | Public XDG payload | `gh-vault env archive` | Review with `variable sync --dry-run`, then ordinary `variable sync` |
+| `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote Secret remains. Before `secret sync --prune`, run the full pre-push review sequence above |
+| `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote Variable remains. Before `variable sync --prune`, run the full pre-push review sequence above |
 
 ### Import repository Variables into `.env`
 

@@ -62,6 +62,7 @@ def test_add_command_is_removed() -> None:
         (["git-credential", "--help"], "Serve Git's credential-helper protocol"),
         (["env", "archive", "--help"], "Encrypt the current project environment"),
         (["env", "restore", "--help"], "Restore a project environment"),
+        (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
         (["secrets", "sync", "--help"], "Set GH_SECRET_ entries as GitHub Secrets"),
         (["secrets", "export-act", "--help"], "Write GH_SECRET_ values to .secrets"),
         (["secrets", "check", "--help"], "Compare GH_SECRET_ and GH_VAR_ declarations"),
@@ -136,6 +137,21 @@ def test_env_run_maps_actions_values_with_secret_precedence(monkeypatch: pytest.
     assert captured["environment"]["REGION"] == "secret-region"  # type: ignore[index]
     assert captured["environment"]["TOKEN"] == "secret-token"  # type: ignore[index]
     assert captured["environment"]["LOCAL_ONLY"] == "local"  # type: ignore[index]
+
+
+def test_env_archive_accepts_repeated_profile_files_and_list_reports_templates(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["env", "archive", "--env-file", ".env.development", "--env-file", ".env.production"])
+    archived: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(cli, "archive_environment", lambda store, directory, env_file, example_file: archived.append((env_file, example_file)) or "github.com/owner/repo")
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert archived == [(Path(".env.development"), Path(".env.example.development")), (Path(".env.production"), Path(".env.example.production"))]
+    assert capsys.readouterr().out.splitlines() == ["Archived .env.development for github.com/owner/repo.", "Archived .env.production for github.com/owner/repo."]
+
+    args = cli.build_parser().parse_args(["env", "list"])
+    monkeypatch.setattr(cli, "list_environments", lambda store, directory: ("github.com/owner/repo", [("development", False), ("production", True)]))
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out.splitlines() == [".env.development example=no", ".env.production example=yes"]
 
 
 def test_env_run_requires_an_explicit_command_separator() -> None:

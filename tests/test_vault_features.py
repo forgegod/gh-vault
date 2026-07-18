@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, runtime_environment, sync
-from gh_vault.envfiles import archive_environment, parse_dotenv, project_namespace, restore_environment
+from gh_vault.envfiles import archive_environment, list_environments, parse_dotenv, project_namespace, restore_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
 
@@ -19,7 +19,13 @@ class MemoryVault:
         self.values[name] = value
 
     def get_secret(self, name: str) -> str:
-        return self.values[name]
+        try:
+            return self.values[name]
+        except KeyError as exc:
+            raise StoreError(f"missing test secret: {name}") from exc
+
+    def remove_secret(self, name: str) -> None:
+        self.values.pop(name, None)
 
 
 def test_project_namespace_normalizes_ssh_origin(monkeypatch, tmp_path: Path) -> None:
@@ -141,6 +147,46 @@ def test_archive_and_restore_uses_template_comments(monkeypatch, tmp_path: Path)
     restore_environment(vault, tmp_path, env, example, False, False)  # type: ignore[arg-type]
     assert env.read_text(encoding="utf-8") == "# API access\nAPI_KEY=alpha\n\n# Local additions\nEXTRA=beta\n"
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+
+def test_archive_lists_and_restores_named_environments(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    vault = MemoryVault()
+    production = tmp_path / ".env.production"
+    development = tmp_path / ".env.development"
+    production_example = tmp_path / ".env.example.production"
+    production.write_text("API_KEY=production\n", encoding="utf-8")
+    development.write_text("API_KEY=development\n", encoding="utf-8")
+    production_example.write_text("# Production\nAPI_KEY=\n", encoding="utf-8")
+
+    archive_environment(vault, tmp_path, production, production_example)  # type: ignore[arg-type]
+    archive_environment(vault, tmp_path, development, tmp_path / ".env.example.development")  # type: ignore[arg-type]
+    assert list_environments(vault, tmp_path) == ("github.com/owner/repo", [("development", False), ("production", True)])  # type: ignore[arg-type]
+
+    production.unlink()
+    production_example.unlink()
+    restore_environment(vault, tmp_path, production, production_example, False, False)  # type: ignore[arg-type]
+    assert production.read_text(encoding="utf-8") == "# Production\nAPI_KEY=production\n"
+
+
+def test_list_and_restore_support_legacy_default_archive(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    vault = MemoryVault()
+    base = "projects/github.com/owner/repo"
+    vault.values[f"{base}/env.json"] = '{"origin": "https://github.com/owner/repo.git", "values": {"API_KEY": "legacy"}, "version": 1}'
+    vault.values[f"{base}/env.example"] = "API_KEY=\n"
+
+    assert list_environments(vault, tmp_path) == ("github.com/owner/repo", [("default", True)])  # type: ignore[arg-type]
+    restore_environment(vault, tmp_path, tmp_path / ".env", tmp_path / ".env.example", False, False)  # type: ignore[arg-type]
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "API_KEY=legacy\n"
 
 
 def test_export_act_and_workflow_check(tmp_path: Path) -> None:

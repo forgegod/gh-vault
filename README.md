@@ -101,7 +101,7 @@ git config credential.https://github.com.helper '!gh-vault git-credential'
 
 ## Project environment archive
 
-Archives store the complete `.env` content and the `.env.example` template as separate encrypted entries in `pass`, identified by the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`).
+Archives store `.env` and named `.env.<profile>` values as separate encrypted entries in `pass`, identified by the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`). A paired `.env.example` or `.env.example.<profile>` template is archived when it exists.
 
 ### Archive
 
@@ -109,11 +109,14 @@ Archives store the complete `.env` content and the `.env.example` template as se
 # Run in the project checkout
 gh-vault env archive
 
-# Custom file paths
-gh-vault env archive --env-file .env.production --example-file .env.example.production
+# Archive named variants; repeat --env-file for multiple profiles
+gh-vault env archive --env-file .env.development --env-file .env.production
+
+# An explicit template path is supported for one selected environment
+gh-vault env archive --env-file .env.production --example-file deploy/production.template
 ```
 
-Writes two `pass` entries under `gh-vault/projects/<host>/<owner>/<repo>/`: `env.json` (values + origin URL + version) and `env.example` (the template text).
+Named files use their profile name in the encrypted entry. `gh-vault env list` lists every archived `.env` / `.env.<profile>` variant and whether its matching template was archived.
 
 ### Restore
 
@@ -122,9 +125,11 @@ gh-vault env restore                          # uses current .env.example, refus
 gh-vault env restore --force                  # overwrite existing .env
 gh-vault env restore --restore-example        # restore the archived template too
 gh-vault env restore --force --restore-example
+gh-vault env restore --env-file .env.production
+gh-vault env list
 ```
 
-Restore checks that the archived origin matches the current checkout's `remote.origin.url`. It reconstructs `.env` by applying archived values onto the template: template lines with matching keys get the archived value; template lines without a key (comments, blank lines) are preserved; archived keys absent from the template are appended under a `# Local additions` section.
+Restore checks that the archived origin matches the current checkout's `remote.origin.url`. `--env-file .env.<profile>` selects that named archive and uses `.env.example.<profile>` unless `--example-file` is supplied. It reconstructs the selected file by applying archived values onto the template: template lines with matching keys get the archived value; template lines without a key (comments, blank lines) are preserved; archived keys absent from the template are appended under a `# Local additions` section.
 
 ### Run with project environment
 

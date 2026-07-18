@@ -63,10 +63,10 @@ def test_add_command_is_removed() -> None:
         (["env", "archive", "--help"], "Encrypt the current project environment"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
-        (["secrets", "sync", "--help"], "Set GH_SECRET_ entries as GitHub Secrets"),
-        (["secrets", "export-act", "--help"], "Write GH_SECRET_ values to .secrets"),
-        (["secrets", "check", "--help"], "Compare GH_SECRET_ and GH_VAR_ declarations"),
-        (["variables", "import", "--help"], "Import repository Variables as GH_VAR_ entries"),
+        (["secrets", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
+        (["secrets", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
+        (["secrets", "check", "--help"], "Compare typed gh-vault declarations"),
+        (["variables", "import", "--help"], "Import repository Variables with gh-vault variable directives"),
         (["workflow", "check", "--help"], "Report missing, mismatched, and unreferenced"),
     ],
 )
@@ -124,19 +124,18 @@ def test_set_with_manual_scopes_allows_unavailable_inspection(monkeypatch: pytes
     assert captured["profile"] == Profile("release", ("read:org",))
 
 
-def test_env_run_maps_actions_values_with_secret_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_run_injects_declared_actions_values(monkeypatch: pytest.MonkeyPatch) -> None:
     args = cli.build_parser().parse_args(["env", "run", "--", "program", "argument"])
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(cli, "runtime_environment", lambda path: {"REGION": "secret-region", "TOKEN": "secret-token", "LOCAL_ONLY": "local"})
+    monkeypatch.setattr(cli, "runtime_environment", lambda path: {"REGION": "eu", "TOKEN": "secret-token"})
     monkeypatch.setattr(cli.os, "execvpe", lambda program, arguments, environment: captured.update(program=program, arguments=arguments, environment=environment))
 
     assert cli.dispatch(args, MemoryStore()) == 127  # type: ignore[arg-type]
     assert captured["program"] == "program"
     assert captured["arguments"] == ["program", "argument"]
-    assert captured["environment"]["REGION"] == "secret-region"  # type: ignore[index]
+    assert captured["environment"]["REGION"] == "eu"  # type: ignore[index]
     assert captured["environment"]["TOKEN"] == "secret-token"  # type: ignore[index]
-    assert captured["environment"]["LOCAL_ONLY"] == "local"  # type: ignore[index]
 
 
 def test_env_archive_accepts_repeated_profile_files_and_list_reports_templates(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -193,8 +192,8 @@ def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPat
         cli,
         "check_workflows",
         lambda *args: {
-            "unreferenced": [{"file": ".env", "line": 4, "severity": "warning", "name": "LOCAL", "message": "GH_VAR_LOCAL is declared locally but not referenced by a workflow"}],
-            "type_mismatch": [{"file": "export.yml", "line": 12, "severity": "error", "name": "REGION", "message": "secrets.REGION is referenced but .env declares GH_VAR_REGION"}],
+            "unreferenced": [{"file": ".env", "line": 4, "severity": "warning", "name": "LOCAL", "message": "LOCAL is declared as gh-vault variable but not referenced by a workflow"}],
+            "type_mismatch": [{"file": "export.yml", "line": 12, "severity": "error", "name": "REGION", "message": "secrets.REGION is referenced but .env declares REGION as gh-vault variable"}],
             "order": [],
             "orphan": [{"file": "export.yml", "line": 13, "severity": "warning", "name": "OPTIONAL", "message": "vars.OPTIONAL is not declared locally and has no fallback default"}],
         },
@@ -202,8 +201,8 @@ def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPat
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out.splitlines() == [
-        ".env:4: warning: GH_VAR_LOCAL is declared locally but not referenced by a workflow",
-        "export.yml:12: error: secrets.REGION is referenced but .env declares GH_VAR_REGION",
+        ".env:4: warning: LOCAL is declared as gh-vault variable but not referenced by a workflow",
+        "export.yml:12: error: secrets.REGION is referenced but .env declares REGION as gh-vault variable",
         "export.yml:13: warning: vars.OPTIONAL is not declared locally and has no fallback default",
     ]
 
@@ -221,7 +220,7 @@ def test_secret_check_reports_secret_to_variable_type_drift(monkeypatch: pytest.
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], ["SIGNIN_CLIENT_ID"], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
-    assert capsys.readouterr().out == "GH_VAR_SIGNIN_CLIENT_ID -> GH_SECRET_SIGNIN_CLIENT_ID\n"
+    assert capsys.readouterr().out == "SIGNIN_CLIENT_ID: GitHub variable -> gh-vault secret\n"
 
 
 def test_secret_check_reports_remote_secrets_absent_from_env(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -229,7 +228,7 @@ def test_secret_check_reports_remote_secrets_absent_from_env(monkeypatch: pytest
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], ["OWNCLOUD_SSH_PASSWORD"], [], [], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
-    assert capsys.readouterr().out == "GH_SECRET_OWNCLOUD_SSH_PASSWORD is not set in .env\n"
+    assert capsys.readouterr().out == "GitHub secret OWNCLOUD_SSH_PASSWORD is not declared in .env\n"
 
 
 def test_secret_check_reports_variable_to_secret_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -237,7 +236,7 @@ def test_secret_check_reports_variable_to_secret_type_drift(monkeypatch: pytest.
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], [], ["JMED_SMTP_FROM"]))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
-    assert capsys.readouterr().out == "GH_SECRET_JMED_SMTP_FROM -> GH_VAR_JMED_SMTP_FROM\n"
+    assert capsys.readouterr().out == "JMED_SMTP_FROM: GitHub secret -> gh-vault variable\n"
 
 
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:

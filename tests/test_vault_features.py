@@ -160,11 +160,14 @@ def test_parse_typed_dotenv_rejects_legacy_prefixes(tmp_path: Path, key: str) ->
         parse_typed_dotenv(env)
 
 
-def test_runtime_environment_injects_local_values_and_secret_precedence(tmp_path: Path) -> None:
+def test_runtime_environment_injects_only_declared_actions_values(tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("LOCAL_ONLY='literal\\ntext'\nESCAPED=\"line\\nbreak\"\nGH_VAR_REGION=eu\nGH_SECRET_REGION=secret-region\n", encoding="utf-8")
+    env.write_text(
+        "LOCAL_ONLY=local\n# gh-vault: variable\nREGION=eu\n# gh-vault: secret\nAPI_KEY=synthetic\n# gh-vault: secret\nGITHUB_TOKEN=reserved\n",
+        encoding="utf-8",
+    )
 
-    assert runtime_environment(env) == {"LOCAL_ONLY": "literal\\ntext", "ESCAPED": "line\nbreak", "REGION": "secret-region"}
+    assert runtime_environment(env) == {"REGION": "eu", "API_KEY": "synthetic"}
 
 
 def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:
@@ -262,8 +265,10 @@ def test_list_and_restore_support_legacy_default_archive(monkeypatch, tmp_path: 
 
 def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("GH_SECRET_API_KEY=alpha\nGH_VAR_REGION=eu\n", encoding="utf-8")
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu\nLOCAL_ONLY=local\n", encoding="utf-8")
     entries = action_values(env)
+    assert entries == [ActionValue("API_KEY", "secret", "alpha"), ActionValue("REGION", "variable", "eu")]
+    assert [entry.line for entry in entries] == [2, 4]
     secrets, variables = export_act(entries, tmp_path / ".secrets", tmp_path / ".vars")
     assert (secrets, variables) == (1, 1)
     assert (tmp_path / ".secrets").read_text(encoding="utf-8") == "API_KEY=alpha\n"
@@ -298,7 +303,7 @@ def test_workflow_check_omits_defaulted_and_github_orphans(tmp_path: Path) -> No
 
 def test_import_variables_preserves_existing_values_without_force(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("# Deployment\nGH_VAR_REGION=local\nOTHER=value\n", encoding="utf-8")
+    env.write_text("# Deployment\n# gh-vault: variable\nREGION=local\nOTHER=value\n", encoding="utf-8")
     calls: list[list[str]] = []
 
     class Result:
@@ -313,14 +318,14 @@ def test_import_variables_preserves_existing_values_without_force(monkeypatch, t
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
 
     assert import_variables(tmp_path, "owner/repo", False) == (env, 1)
-    assert env.read_text(encoding="utf-8") == "# Deployment\nGH_VAR_REGION=local\nOTHER=value\n\n# Local additions\nGH_VAR_MODE=production\n"
+    assert env.read_text(encoding="utf-8") == "# Deployment\n# gh-vault: variable\nREGION=local\nOTHER=value\n\n# gh-vault: variable\nMODE=production\n"
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
     assert calls == [["gh", "variable", "list", "--repo", "owner/repo", "--json", "name,value"]]
 
 
 def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_path: Path) -> None:
     example = tmp_path / ".env.example"
-    example.write_text("GH_VAR_REGION=local\n", encoding="utf-8")
+    example.write_text("# gh-vault: variable\n# REGION=local\n", encoding="utf-8")
 
     class Result:
         returncode = 0
@@ -330,12 +335,36 @@ def test_import_variables_uses_example_and_force_overwrites(monkeypatch, tmp_pat
     monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda *args, **kwargs: Result())
 
     assert import_variables(tmp_path, "owner/repo", True) == (example, 1)
-    assert example.read_text(encoding="utf-8") == "GH_VAR_REGION=remote\n"
+    assert example.read_text(encoding="utf-8") == "# gh-vault: variable\n# REGION=remote\n"
+
+
+def test_import_variables_does_not_reclassify_local_values(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("REGION=local\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = '[{"name":"REGION","value":"remote"}]'
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda *args, **kwargs: Result())
+
+    with pytest.raises(StoreError, match="local declaration is local"):
+        import_variables(tmp_path, "owner/repo", True)
+    assert env.read_text(encoding="utf-8") == "REGION=local\n"
+
+
+def test_import_variables_reports_a_missing_target(tmp_path: Path) -> None:
+    with pytest.raises(StoreError, match="cannot read"):
+        import_variables(tmp_path, "owner/repo", False)
 
 
 def test_remote_secret_status_identifies_secret_variable_type_drift(monkeypatch, tmp_path: Path) -> None:
     env = tmp_path / ".env"
-    env.write_text("GH_SECRET_CONFIGURED=value\nGH_SECRET_SIGNIN_CLIENT_ID=client\nGH_SECRET_MISSING=\nGH_VAR_JMED_SMTP_FROM=sender\n", encoding="utf-8")
+    env.write_text(
+        "# gh-vault: secret\nCONFIGURED=value\n# gh-vault: secret\nSIGNIN_CLIENT_ID=client\n# gh-vault: secret\nMISSING=\n# gh-vault: variable\nJMED_SMTP_FROM=sender\n",
+        encoding="utf-8",
+    )
     calls: list[list[str]] = []
 
     class Result:

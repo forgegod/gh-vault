@@ -138,11 +138,23 @@ gh-vault env run -- ./scripts/report.sh
 gh-vault env run -- python exporter.py --test --verbose
 ```
 
-Injects all parsed `.env` values into the child environment. `GH_VAR_<KEY>` and `GH_SECRET_<KEY>` are mapped to unprefixed `<KEY>`; when both prefixes declare the same key, the Secret wins. The command uses the conservative dotenv parser (see below), never the shell.
+Injects only values marked by an adjacent `# gh-vault: secret` or `# gh-vault: variable` directive, under their ordinary dotenv key. Unmarked local values are deliberately excluded. The command uses the conservative dotenv parser (see below), never the shell.
 
 ## GitHub Actions values
 
-Only entries prefixed `GH_SECRET_NAME=value` or `GH_VAR_NAME=value` in `.env` are treated as Actions values. The prefix is stripped before any GitHub operation. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped.
+An adjacent directive selects the GitHub Actions store while keeping a standard dotenv key:
+
+```dotenv
+# gh-vault: variable
+REGION=eu-west-1
+
+# gh-vault: secret
+API_KEY=synthetic-value
+
+LOCAL_ONLY=local
+```
+
+The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped.
 
 ### Sync declared values to GitHub
 
@@ -150,7 +162,7 @@ Only entries prefixed `GH_SECRET_NAME=value` or `GH_VAR_NAME=value` in `.env` ar
 # Preview without changes
 gh-vault secrets sync --dry-run
 
-# Set all declared GH_SECRET_ as Secrets and GH_VAR_ as Variables
+# Set all typed declarations in their selected GitHub stores
 gh-vault secrets sync
 
 # Resolve type mismatches: remove opposite-type remote value, then set declared type
@@ -163,7 +175,7 @@ gh-vault secrets sync --prune
 gh-vault secrets sync --repo owner/repo
 ```
 
-Ordinary sync creates or updates remote Secrets and Variables but never deletes. `--migrate-types` handles type changes: if `GH_SECRET_API_KEY` is declared but a GitHub Variable `API_KEY` exists, it removes the Variable first, then sets the Secret. `--prune` removes remote Secrets and Variables whose names have no local declaration; it deliberately leaves same-name opposite types alone and cannot be combined with `--migrate-types`. `--dry-run` reports the count of what would be synced or pruned without touching GitHub.
+Ordinary sync creates or updates remote Secrets and Variables but never deletes. `--migrate-types` handles type changes: if `API_KEY` has a `secret` directive but a GitHub Variable of that name exists, it removes the Variable first, then sets the Secret. `--prune` removes remote Secrets and Variables whose names have no typed local declaration; it deliberately leaves same-name opposite types alone and cannot be combined with `--migrate-types`. `--dry-run` reports the count of what would be synced or pruned without touching GitHub.
 
 ### Check local declarations against GitHub
 
@@ -172,7 +184,7 @@ gh-vault secrets check
 gh-vault secrets check --repo owner/repo
 ```
 
-Compares every `GH_SECRET_*` and `GH_VAR_*` declaration against both GitHub Actions stores. The local prefix is authoritative — a GitHub Variable for a `GH_SECRET_NAME` entry is reported as `GH_VAR_NAME -> GH_SECRET_NAME` and vice versa. Reports four categories, all nonzero-exit until resolved:
+Compares every typed declaration against both GitHub Actions stores. The adjacent directive is authoritative, so a GitHub Variable for a local `secret` declaration is reported as type drift and vice versa. Reports four categories, all nonzero-exit until resolved:
 
 - Missing secrets or variables (declared locally, absent on GitHub)
 - Remote-only values (exist on GitHub but not in `.env`)
@@ -186,10 +198,10 @@ Never modifies `.env`.
 ```sh
 gh-vault variables import
 gh-vault variables import --repo owner/repo
-gh-vault variables import --force    # overwrite existing GH_VAR_ entries
+gh-vault variables import --force    # overwrite existing variable declarations
 ```
 
-Reads repository variables via `gh variable list` and writes them as `GH_VAR_*` entries. Targets `.env` when it exists, otherwise `.env.example`. Existing entries are retained unless `--force` is supplied.
+Reads repository variables via `gh variable list` and writes standard keys with `# gh-vault: variable` directives. Targets `.env` when it exists, otherwise writes commented assignments in `.env.example`. Existing entries are retained unless `--force` is supplied; force overwrites only an existing `variable` declaration and refuses to reclassify a secret or local-only key.
 
 ### Export values for local `act` runs
 
@@ -198,7 +210,7 @@ gh-vault secrets export-act
 act workflow_dispatch --secret-file .secrets --var-file .vars
 ```
 
-`export-act` splits `.env` entries into two files: `.secrets` (from `GH_SECRET_*`) and `.vars` (from `GH_VAR_*`). Both are mode `0600` and gitignored. Multi-line values are base64-encoded with the `@base64:` prefix that `act` consumes natively.
+`export-act` splits typed `.env` entries into two files: `.secrets` from `secret` declarations and `.vars` from `variable` declarations. Unmarked local values are excluded. Both generated files are mode `0600` and gitignored. Multi-line values are base64-encoded with the `@base64:` prefix that `act` consumes natively.
 
 The two-flag invocation is required because [act](https://github.com/nektos/act) populates `secrets.*` from `--secret-file` only — it does not map `vars.*` from a secret file. Without `--var-file .vars`, workflow references to `vars.X` resolve to empty and the run fails. If a workflow cannot use separate variable files, add `vars.X || secrets.X` fallbacks in the workflow YAML.
 
@@ -214,8 +226,8 @@ Scans `.github/workflows/*.yml` and `*.yaml` for `secrets.NAME` and `vars.NAME` 
 
 | Severity | Finding | Description |
 |---|---|---|
-| `error` | Unreferenced local value | `GH_SECRET_*` or `GH_VAR_*` declared in `.env` but never referenced by any workflow |
-| `error` | Type mismatch | Workflow uses `vars.NAME` but `.env` declares `GH_SECRET_NAME`, or vice versa |
+| `error` | Unreferenced local value | A typed declaration in `.env` is never referenced by any workflow |
+| `error` | Type mismatch | Workflow uses `vars.NAME` but `.env` marks `NAME` as `secret`, or vice versa |
 | `error` | Fallback order | Expression puts `vars.X` before `secrets.X` in a `||` chain |
 | `warning` | Orphan reference | Workflow references a name not declared locally and with no fallback default |
 
@@ -233,6 +245,8 @@ Excludes GitHub-provided names like `GITHUB_TOKEN`. Exits nonzero if any errors 
 | `KEY='value'` | Single-quoted; content taken verbatim, no escapes |
 | `KEY=@file:path` | Reads the file content (relative to `.env` directory) |
 | `KEY=@base64:data` | Base64-decodes the data |
+| `# gh-vault: secret` | Marks the immediately following assignment as a GitHub Secret |
+| `# gh-vault: variable` | Marks the immediately following assignment as a GitHub Variable |
 | `# comment` | Comment line, ignored |
 | `value # trailing` | Inline comment stripped (space before `#` required) |
 

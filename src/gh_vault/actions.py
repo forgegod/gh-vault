@@ -6,20 +6,21 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
-from .envfiles import _write_private, parse_dotenv, project_namespace, render_template
+from .envfiles import DotenvAssignment, _write_private, format_dotenv_value, parse_typed_dotenv, project_namespace
 from .store import StoreError
 
-RESERVED = re.compile(r"^(?:GITHUB_|RUNNER_|CI$|GH_TOKEN$)")
+RESERVED = re.compile(r"^(?:GITHUB_.*|RUNNER_.*|CI|GH_TOKEN)$")
 REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
 DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-DOTENV_ASSIGNMENT = re.compile(r"^\s*(?:export\s+)?(?P<key>[A-Za-z_][A-Za-z0-9_]*)\s*=")
+
 
 
 @dataclass(frozen=True)
 class ActionValue:
     name: str
-    kind: str
+    kind: Literal["secret", "variable"]
     value: str
     source: Path | None = field(default=None, compare=False)
     line: int | None = field(default=None, compare=False)
@@ -42,34 +43,19 @@ class SyncResult:
 
 
 def action_values(env_file: Path) -> list[ActionValue]:
-    entries: list[ActionValue] = []
-    locations = {
-        match["key"]: number
-        for number, line in enumerate(env_file.read_text(encoding="utf-8").splitlines(), 1)
-        if (match := DOTENV_ASSIGNMENT.match(line))
-    }
-    for key, value in parse_dotenv(env_file).items():
-        if key.startswith("GH_SECRET_"):
-            name, kind = key.removeprefix("GH_SECRET_"), "secret"
-        elif key.startswith("GH_VAR_"):
-            name, kind = key.removeprefix("GH_VAR_"), "var"
-        else:
-            continue
-        if name and value and not RESERVED.fullmatch(name):
-            entries.append(ActionValue(name, kind, value, env_file, locations.get(key)))
-    return entries
+    return [
+        ActionValue(entry.key, entry.kind, entry.value, env_file, entry.line)
+        for entry in parse_typed_dotenv(env_file)
+        if entry.kind != "local" and entry.value and not RESERVED.fullmatch(entry.key)
+    ]
 
 
 def runtime_environment(env_file: Path) -> dict[str, str]:
-    values = parse_dotenv(env_file)
-    environment = {key: value for key, value in values.items() if not key.startswith(("GH_VAR_", "GH_SECRET_"))}
-    for prefix in ("GH_VAR_", "GH_SECRET_"):
-        for key, value in values.items():
-            if key.startswith(prefix):
-                name = key.removeprefix(prefix)
-                if name and not RESERVED.fullmatch(name):
-                    environment[name] = value
-    return environment
+    return {
+        entry.key: entry.value
+        for entry in parse_typed_dotenv(env_file)
+        if entry.kind != "local" and not RESERVED.fullmatch(entry.key)
+    }
 
 
 def _remote_names(kind: str, repo: str) -> set[str]:
@@ -88,7 +74,12 @@ def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int
     target = directory / ".env"
     if not target.exists():
         target = directory / ".env.example"
-    values = parse_dotenv(target)
+    template = target.name.startswith(".env.example")
+    assignments = {entry.key: entry for entry in parse_typed_dotenv(target, include_commented=template)}
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StoreError(f"cannot read {target}: {exc}") from exc
     result = subprocess.run(
         ["gh", "variable", "list", "--repo", repo, "--json", "name,value"],
         text=True,
@@ -106,28 +97,41 @@ def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int
         for item in remote
     ):
         raise StoreError("GitHub variable list returned invalid data")
-    imported = 0
+    updates: dict[str, str] = {}
     for item in remote:
-        key = f"GH_VAR_{item['name']}"
-        if force or key not in values:
-            values[key] = item["value"]
-            imported += 1
-    _write_private(target, render_template(target.read_text(encoding="utf-8"), values))
-    return target, imported
+        if RESERVED.fullmatch(item["name"]):
+            continue
+        existing = assignments.get(item["name"])
+        if existing is not None and not force:
+            continue
+        if existing is not None and existing.kind != "variable":
+            raise StoreError(f"cannot import GitHub variable {item['name']}: local declaration is {existing.kind}")
+        updates[item["name"]] = item["value"]
+    _write_private(target, _render_imported_variables(source, assignments, updates, template))
+    return target, len(updates)
+
+
+def _render_imported_variables(source: str, assignments: dict[str, DotenvAssignment], updates: dict[str, str], template: bool) -> str:
+    lines = source.splitlines()
+    existing_names: set[str] = set()
+    for name, assignment in assignments.items():
+        if name in updates:
+            prefix = "# " if assignment.commented else ""
+            lines[assignment.line - 1] = f"{prefix}{name}={format_dotenv_value(updates[name])}"
+            existing_names.add(name)
+    additions = [name for name in updates if name not in existing_names]
+    if additions:
+        if lines and lines[-1]:
+            lines.append("")
+        for name in additions:
+            lines.extend(("# gh-vault: variable", f"{'# ' if template else ''}{name}={format_dotenv_value(updates[name])}"))
+    return "\n".join(lines) + "\n"
 
 
 def remote_secret_status(env_file: Path, repo: str) -> RemoteValueStatus:
-    values = parse_dotenv(env_file)
-    local = {
-        key.removeprefix("GH_SECRET_")
-        for key in values
-        if key.startswith("GH_SECRET_") and key.removeprefix("GH_SECRET_") and not RESERVED.fullmatch(key.removeprefix("GH_SECRET_"))
-    }
-    local_variables = {
-        key.removeprefix("GH_VAR_")
-        for key in values
-        if key.startswith("GH_VAR_") and key.removeprefix("GH_VAR_") and not RESERVED.fullmatch(key.removeprefix("GH_VAR_"))
-    }
+    assignments = parse_typed_dotenv(env_file)
+    local = {entry.key for entry in assignments if entry.kind == "secret" and not RESERVED.fullmatch(entry.key)}
+    local_variables = {entry.key for entry in assignments if entry.kind == "variable" and not RESERVED.fullmatch(entry.key)}
     remote_secrets = _remote_names("secret", repo)
     remote_variables = _remote_names("variable", repo)
     return RemoteValueStatus(
@@ -171,17 +175,17 @@ def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bo
 
 
 def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) -> tuple[int, int]:
-    grouped = {"secret": [], "var": []}
+    grouped = {"secret": [], "variable": []}
     for entry in entries:
         value = entry.value
         if "\n" in value:
             value = "@base64:" + base64.b64encode(value.encode()).decode()
         grouped[entry.kind].append(f"{entry.name}={value}")
-    for kind, target in (("secret", secrets_path), ("var", vars_path)):
+    for kind, target in (("secret", secrets_path), ("variable", vars_path)):
         if grouped[kind]:
             target.write_text("\n".join(grouped[kind]) + "\n", encoding="utf-8")
             target.chmod(0o600)
-    return len(grouped["secret"]), len(grouped["var"])
+    return len(grouped["secret"]), len(grouped["variable"])
 
 
 def _finding(path: Path, line: int, severity: str, name: str, message: str) -> dict[str, str | int]:
@@ -214,14 +218,14 @@ def check_workflows(directory: Path, entries: list[ActionValue]) -> dict[str, li
                 order.append(_finding(path, number, "error", found[0][0], "reference secrets before vars in a fallback expression"))
     local = {entry.name: entry.kind for entry in entries}
     unreferenced = [
-        _finding(entry.source or Path(".env"), entry.line or 1, "warning", entry.name, f"GH_{entry.kind.upper()}_{entry.name} is declared locally but not referenced by a workflow")
+        _finding(entry.source or Path(".env"), entry.line or 1, "warning", entry.name, f"{entry.name} is declared as gh-vault {entry.kind} but not referenced by a workflow")
         for entry in entries
         if entry.name not in refs
     ]
     mismatch = [
-        _finding(path, number, "error", name, f"{kind}.{name} is referenced but .env declares GH_{local[name].upper()}_{name}")
+        _finding(path, number, "error", name, f"{kind}.{name} is referenced but .env declares {name} as gh-vault {local[name]}")
         for name, kinds in refs.items()
-        if name in local and len(kinds) == 1 and ({"secret": "secrets", "var": "vars"}[local[name]] not in kinds)
+        if name in local and len(kinds) == 1 and ({"secret": "secrets", "variable": "vars"}[local[name]] not in kinds)
         for path, number, kind in locations[name]
     ]
     orphan = [

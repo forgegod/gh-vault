@@ -93,6 +93,10 @@ def test_parser_rejects_removed_plural_command_groups(command: str) -> None:
     "arguments",
     [
         ["secret", "sync"],
+        ["secret", "sync", "--dry-run"],
+        ["secret", "sync", "--prune"],
+        ["secret", "sync", "--migrate-types"],
+        ["secret", "sync", "--repo", "owner/repo"],
         ["secret", "export-act"],
         ["secret", "check", "--repo", "owner/repo"],
         ["variable", "import", "--force"],
@@ -102,6 +106,37 @@ def test_parser_rejects_removed_plural_command_groups(command: str) -> None:
 def test_parser_accepts_singular_action_command_groups(arguments: list[str]) -> None:
     args = cli.build_parser().parse_args(arguments)
     assert args.command in {"secret", "variable"}
+
+
+@pytest.mark.parametrize("command", ["secret", "variable"])
+def test_sync_parser_accepts_matching_options(command: str) -> None:
+    args = cli.build_parser().parse_args([command, "sync", "--env-file", ".env.test", "--repo", "owner/repo", "--dry-run"])
+    assert getattr(args, f"{command}_command") == "sync"
+    assert args.env_file == Path(".env.test")
+    assert args.repo == "owner/repo"
+    assert args.dry_run is True
+    assert args.prune is False
+    assert args.migrate_types is False
+
+
+@pytest.mark.parametrize("command", ["secret", "variable"])
+def test_sync_parser_accepts_prune_and_migrate_types_separately(command: str) -> None:
+    prune_args = cli.build_parser().parse_args([command, "sync", "--prune"])
+    assert prune_args.prune is True
+    assert prune_args.migrate_types is False
+    migrate_args = cli.build_parser().parse_args([command, "sync", "--migrate-types"])
+    assert migrate_args.prune is False
+    assert migrate_args.migrate_types is True
+
+
+def test_variable_sync_parser_accepts_matching_options() -> None:
+    args = cli.build_parser().parse_args(["variable", "sync", "--env-file", ".env.production", "--repo", "owner/repo"])
+    assert args.variable_command == "sync"
+    assert args.env_file == Path(".env.production")
+    assert args.repo == "owner/repo"
+    assert args.dry_run is False
+    assert args.prune is False
+    assert args.migrate_types is False
 
 
 def test_set_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -230,13 +265,98 @@ def test_sync_rejects_prune_with_type_migration() -> None:
         cli.build_parser().parse_args(["secret", "sync", "--prune", "--migrate-types"])
 
 
-def test_sync_dry_run_reports_prune_count(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_variable_sync_rejects_prune_with_type_migration() -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.build_parser().parse_args(["variable", "sync", "--prune", "--migrate-types"])
+
+
+def test_secret_sync_dispatches_only_secret_entries(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secret", "sync", "--dry-run", "--prune"])
-    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "value")])
-    monkeypatch.setattr(cli, "sync", lambda *args: SyncResult(1, 2))
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli,
+        "action_values",
+        lambda path: [
+            ActionValue("API_KEY", "secret", "alpha"),
+            ActionValue("REGION", "variable", "eu"),
+        ],
+    )
+
+    def fake_sync(entries, repo, dry_run, migrate_types=False, prune=False):
+        captured["entries"] = [(entry.name, entry.kind) for entry in entries]
+        captured["repo"] = repo
+        captured["dry_run"] = dry_run
+        captured["prune"] = prune
+        captured["migrate_types"] = migrate_types
+        return SyncResult(1, 3)
+
+    monkeypatch.setattr(cli, "sync", fake_sync)
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
-    assert capsys.readouterr().out == "Would sync 1 entry(s); would prune 2 remote value(s).\n"
+    assert captured["entries"] == [("API_KEY", "secret")]
+    assert captured["repo"] == "github.com/owner/repo"
+    assert captured["dry_run"] is True
+    assert captured["prune"] is True
+    assert captured["migrate_types"] is False
+    assert capsys.readouterr().out == "Would sync 1 secret(s); would prune 3 secret(s).\n"
+
+
+def test_variable_sync_dispatches_only_variable_entries(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "sync", "--dry-run", "--prune"])
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli,
+        "action_values",
+        lambda path: [
+            ActionValue("API_KEY", "secret", "alpha"),
+            ActionValue("REGION", "variable", "eu"),
+        ],
+    )
+
+    def fake_sync(entries, repo, dry_run, migrate_types=False, prune=False):
+        captured["entries"] = [(entry.name, entry.kind) for entry in entries]
+        return SyncResult(2, 4)
+
+    monkeypatch.setattr(cli, "sync", fake_sync)
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert captured["entries"] == [("REGION", "variable")]
+    assert capsys.readouterr().out == "Would sync 2 variable(s); would prune 4 variable(s).\n"
+
+
+def test_secret_sync_summary_uses_secret_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secret", "sync"])
+    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "alpha")])
+    monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    output = capsys.readouterr().out
+    assert output == "Synced 1 secret(s).\n"
+    assert "variable" not in output
+
+
+def test_variable_sync_summary_uses_variable_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "sync"])
+    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("REGION", "variable", "eu")])
+    monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    output = capsys.readouterr().out
+    assert output == "Synced 1 variable(s).\n"
+    assert "secret" not in output
+
+
+def test_secret_sync_dry_run_summary_uses_secret_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secret", "sync", "--dry-run"])
+    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "alpha")])
+    monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    output = capsys.readouterr().out
+    assert output == "Would sync 1 secret(s).\n"
+    assert "variable" not in output
 
 
 def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -9,9 +9,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, runtime_environment, suggested_env, sync
-from .envfiles import archive_environment, example_file_for, list_environments, restore_environment
+from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
-from .store import Profile, StoreError, VaultStore
+from .store import EnvironmentStore, Profile, StoreError, VaultStore
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -39,14 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol", description="Serve Git's credential-helper protocol for HTTPS requests to github.com only."); credential.add_argument("operation", choices=("get", "store", "erase"), help="Git credential-helper operation")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
-    archive = env.add_parser("archive", help="encrypt one or more project environments into the active vault", description="Encrypt the current project environment or repeated .env.<profile> files; paired .env.example variants are optional.")
+    archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
     archive.add_argument("--env-file", type=Path, action="append", help=".env or .env.<profile>; repeat to archive multiple variants")
     archive.add_argument("--example-file", type=Path, help="template path for one selected environment; defaults to the matching .env.example variant")
-    restore = env.add_parser("restore", help="restore one project environment from the active vault", description="Restore a project environment from the active vault; select .env.<profile> with --env-file.")
+    restore = env.add_parser("restore", help="restore one typed project environment", description="Restore a project environment from its public variable payload and encrypted secret payload when present.")
     restore.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to restore")
     restore.add_argument("--example-file", type=Path, help="template path; defaults to the matching .env.example variant")
     restore.add_argument("--force", action="store_true", help="overwrite an existing environment file"); restore.add_argument("--restore-example", action="store_true", help="restore the archived template")
     env.add_parser("list", help="list archived environment variants", description="List archived .env and .env.<profile> variants and whether each has an archived template.")
+    show = env.add_parser("show", help="show archived public variables", description="Print only the selected profile's clear-text variable payload without reading the password store."); show.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to inspect")
     env_run = env.add_parser("run", help="run a command with project environment values", description="Run a command with only values marked by adjacent gh-vault secret or variable directives."); env_run.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); env_run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
     secrets = commands.add_parser("secrets", help="sync or export declared Actions values", description="Synchronize, export, or verify .env values marked for GitHub Actions.").add_subparsers(dest="secrets_command", required=True)
     sync_parser = secrets.add_parser("sync", help="sync declared Actions values to GitHub", description="Set gh-vault secret declarations as GitHub Secrets and variable declarations as GitHub Variables."); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
@@ -141,23 +142,31 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "git-credential": return _git_credential(store, args.operation)
 
     if args.command == "env":
+        environment_store = EnvironmentStore(getattr(store, "config_dir", None))
         if args.env_command == "archive":
             env_files = args.env_file or [Path(".env")]
             if args.example_file and len(env_files) != 1:
                 raise StoreError("--example-file can only be used with one --env-file")
             for env_file in env_files:
                 example_file = args.example_file or example_file_for(env_file)
-                print(f"Archived {env_file} for {archive_environment(store, directory, env_file, example_file)}.")
+                print(f"Archived {env_file} for {archive_environment(store, environment_store, directory, env_file, example_file)}.")
         elif args.env_command == "restore":
             example_file = args.example_file or example_file_for(args.env_file)
-            print(f"Restored {args.env_file} for {restore_environment(store, directory, args.env_file, example_file, args.force, args.restore_example)}.")
+            print(f"Restored {args.env_file} for {restore_environment(store, environment_store, directory, args.env_file, example_file, args.force, args.restore_example)}.")
         elif args.env_command == "list":
-            namespace, environments = list_environments(store, directory)
+            namespace, environments = list_environments(environment_store, directory)
             if not environments:
                 print(f"No archived environments for {namespace}.")
             for profile, has_example in environments:
                 env_file = ".env" if profile == "default" else f".env.{profile}"
                 print(f"{env_file} example={'yes' if has_example else 'no'}")
+        elif args.env_command == "show":
+            _, values = show_environment(environment_store, directory, args.env_file)
+            if not values:
+                print("No archived variables")
+            else:
+                for name, value in sorted(values.items()):
+                    print(f"{name}={format_dotenv_value(value)}")
         else: return _env_run(args.env_file, args.program)
         return 0
     if args.command == "secrets":

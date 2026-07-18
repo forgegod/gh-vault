@@ -12,7 +12,7 @@ Production package for storing named GitHub tokens and project environment archi
 | `__main__.py` | Module entry point delegating to the CLI. |
 | `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config and public environment persistence, `pass` integration, and backend errors. |
-| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |
+| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive, public inspection, and reconstruction. |
 | `github.py` | GitHub token metadata inspection without exposing token values. |
 | `actions.py` | GitHub Actions value selection, remote-variable import, `gh` sync, `act` exports, and workflow references. |
 
@@ -29,7 +29,8 @@ Production package for storing named GitHub tokens and project environment archi
 - `run` sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the exec'd child environment and does not mutate the invoking shell.
 - `git-credential get` responds only to HTTPS requests for `github.com`. `store` and `erase` are no-ops, and token output is limited to Git's exact credential response.
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.
-- Environment archives require `remote.origin.url`, support `.env` plus repeated `.env.<profile>` variants, list each archived variant with its template status, refuse to overwrite a selected environment without `--force`, and reconstruct comments from its matching `.env.example` variant.
+- Environment archives require `remote.origin.url` and split typed declarations: variables use `EnvironmentStore`, secrets use version-3 encrypted entries below `gh-vault/projects/<host>/<path>/`, local values are excluded, and only profiles containing secrets may archive their matching template.
+- `env list` and `env show` read only the public index/payload. Variable-only restore requires a local template and does not access `pass`; normal restore merges public variables and encrypted secrets without reconstructing local-only values.
 - Typed dotenv parsing recognizes only an adjacent `# gh-vault: secret` or `# gh-vault: variable` directive, rejects duplicate and legacy-prefixed declarations, and reads commented template assignments only when explicitly requested. Ordinary `parse_dotenv()` behavior remains directive-agnostic.
 - `env run -- <command> ...` execs a child with only typed `secret` and `variable` declarations under their ordinary keys; unmarked local values are excluded. The conservative dotenv parser decodes quotes and valid escapes without sourcing the file.
 - Actions sync accepts only typed declarations and sends values to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type. `--prune` removes remote-only names but leaves names declared under either local type and is mutually exclusive with type migration.

@@ -60,9 +60,10 @@ def test_add_command_is_removed() -> None:
         (["remove", "--help"], "Delete a token profile"),
         (["run", "--help"], "Run a child command"),
         (["git-credential", "--help"], "Serve Git's credential-helper protocol"),
-        (["env", "archive", "--help"], "Encrypt the current project environment"),
+        (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
+        (["env", "show", "--help"], "Print only the selected profile's clear-text variable payload"),
         (["secrets", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
         (["secrets", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
         (["secrets", "check", "--help"], "Compare typed gh-vault declarations"),
@@ -141,7 +142,7 @@ def test_env_run_injects_declared_actions_values(monkeypatch: pytest.MonkeyPatch
 def test_env_archive_accepts_repeated_profile_files_and_list_reports_templates(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["env", "archive", "--env-file", ".env.development", "--env-file", ".env.production"])
     archived: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(cli, "archive_environment", lambda store, directory, env_file, example_file: archived.append((env_file, example_file)) or "github.com/owner/repo")
+    monkeypatch.setattr(cli, "archive_environment", lambda store, environment_store, directory, env_file, example_file: archived.append((env_file, example_file)) or "github.com/owner/repo")
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
     assert archived == [(Path(".env.development"), Path(".env.example.development")), (Path(".env.production"), Path(".env.example.production"))]

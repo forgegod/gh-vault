@@ -6,10 +6,10 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 from urllib.parse import urlparse
 
-from .store import StoreError, VaultStore
+from .store import EnvironmentStore, StoreError, VaultStore
 
 KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCP_URL = re.compile(r"^(?:[^@]+@)?(?P<host>[^:]+):(?P<path>.+)$")
@@ -23,12 +23,6 @@ class DotenvAssignment:
     kind: DotenvKind
     line: int
     commented: bool
-
-
-class EnvironmentManifest(TypedDict):
-    version: int
-    origin: str
-    environments: dict[str, dict[str, bool]]
 
 
 def project_namespace(directory: Path) -> tuple[str, str]:
@@ -192,51 +186,84 @@ def format_dotenv_value(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def archive_environment(store: VaultStore, directory: Path, env_file: Path, example_file: Path) -> str:
+def archive_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> str:
     namespace, origin = project_namespace(directory)
-    values = parse_dotenv(env_file)
+    assignments = parse_typed_dotenv(env_file)
+    variables = {entry.key: entry.value for entry in assignments if entry.kind == "variable"}
+    secrets = {entry.key: entry.value for entry in assignments if entry.kind == "secret"}
     base = f"projects/{namespace}"
     profile = environment_profile(env_file)
-    store.put_secret(_environment_entry(base, profile, "json"), json.dumps({"version": 2, "origin": origin, "values": values}, sort_keys=True))
-    has_example = example_file.exists()
-    if has_example:
+    manifest = environment_store.load_manifest(namespace, origin)
+    environments = dict(manifest["environments"])
+    previous = environments.get(profile, {"variables": False, "secrets": False, "example": False})
+    example: str | None = None
+    if secrets and example_file.exists():
         try:
-            store.put_secret(_environment_entry(base, profile, "example"), example_file.read_text(encoding="utf-8"))
+            example = example_file.read_text(encoding="utf-8")
         except OSError as exc:
             raise StoreError(f"cannot read {example_file}: {exc}") from exc
+
+    if secrets:
+        payload = {"version": 3, "origin": origin, "values": secrets}
+        store.put_secret(_environment_entry(base, profile, "secrets.json"), json.dumps(payload, sort_keys=True))
+        if _load_secret_payload(store, base, profile, origin) != secrets:
+            raise StoreError("encrypted environment payload verification failed")
+        if example is not None:
+            store.put_secret(_environment_entry(base, profile, "example"), example)
+            if store.get_secret(_environment_entry(base, profile, "example")) != example:
+                raise StoreError("encrypted environment template verification failed")
+    if variables:
+        environment_store.save_variables(namespace, profile, origin, variables)
+        if environment_store.load_variables(namespace, profile, origin) != variables:
+            raise StoreError("environment variable payload verification failed")
+
+    if previous["variables"] and not variables:
+        environment_store.remove_variables(namespace, profile)
+    if previous["secrets"] and not secrets:
+        store.remove_secret(_environment_entry(base, profile, "secrets.json"))
+    if previous["example"] and example is None:
+        store.remove_secret(_environment_entry(base, profile, "example"))
+
+    if variables or secrets:
+        environments[profile] = {"variables": bool(variables), "secrets": bool(secrets), "example": example is not None}
     else:
-        try:
-            store.remove_secret(_environment_entry(base, profile, "example"))
-        except StoreError:
-            pass
-    manifest = _load_environment_manifest(store, base, origin)
-    manifest["environments"][profile] = {"example": has_example}
-    store.put_secret(f"{base}/environments.json", json.dumps(manifest, sort_keys=True))
+        environments.pop(profile, None)
+    if environments:
+        environment_store.save_manifest(namespace, origin, environments)
+    else:
+        environment_store.remove_manifest(namespace)
     return namespace
 
 
-def restore_environment(store: VaultStore, directory: Path, env_file: Path, example_file: Path, force: bool, restore_example: bool) -> str:
+def restore_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path, force: bool, restore_example: bool) -> str:
+    if env_file.exists() and not force:
+        raise StoreError(f"refusing to overwrite {env_file}; use --force")
     namespace, origin = project_namespace(directory)
     base = f"projects/{namespace}"
     profile = environment_profile(env_file)
+    manifest = environment_store.load_manifest(namespace, origin)
+    details = manifest["environments"].get(profile)
+    if details is None:
+        raise StoreError(f"no archived environment for {env_file.name}")
+    variables = environment_store.load_variables(namespace, profile, origin) if details["variables"] else {}
+    secrets = _load_secret_payload(store, base, profile, origin) if details["secrets"] else {}
+    if variables.keys() & secrets.keys():
+        raise StoreError("environment payloads contain duplicate keys")
+    values = {**variables, **secrets}
+    archived_example = store.get_secret(_environment_entry(base, profile, "example")) if details["example"] else None
     try:
-        data = json.loads(store.get_secret(_environment_entry(base, profile, "json")))
-    except json.JSONDecodeError as exc:
-        raise StoreError("archived environment has invalid data") from exc
-    if data.get("origin") != origin or not isinstance(data.get("values"), dict):
-        raise StoreError("archived environment does not match this origin")
-    if env_file.exists() and not force:
-        raise StoreError(f"refusing to overwrite {env_file}; use --force")
-    manifest = _load_environment_manifest(store, base, origin)
-    has_example = manifest["environments"].get(profile, {}).get("example") is True or _has_archived_example(store, base, profile)
-    archived_example = store.get_secret(_environment_entry(base, profile, "example")) if has_example else ""
-    if has_example and (restore_example or not example_file.exists()):
+        local_example = example_file.read_text(encoding="utf-8") if example_file.exists() else None
+    except OSError as exc:
+        raise StoreError(f"cannot read {example_file}: {exc}") from exc
+    if local_example is None and archived_example is None and details["variables"] and not details["secrets"]:
+        raise StoreError(f"variable-only restore requires a local template: {example_file}")
+    if restore_example and archived_example is None:
+        raise StoreError("no archived environment template")
+    template = local_example if local_example is not None else archived_example or ""
+    _write_private(env_file, render_template(template, values))
+    if restore_example:
+        assert archived_example is not None
         _write_private(example_file, archived_example)
-    if not example_file.exists():
-        raise StoreError(f"cannot reconstruct {env_file}: no local or archived {example_file}")
-    template = example_file.read_text(encoding="utf-8")
-    rendered = render_template(template, {str(key): str(value) for key, value in data["values"].items()})
-    _write_private(env_file, rendered)
     return namespace
 
 
@@ -254,50 +281,38 @@ def example_file_for(env_file: Path) -> Path:
     return env_file.parent / (".env.example" if profile == "default" else f".env.example.{profile}")
 
 
-def list_environments(store: VaultStore, directory: Path) -> tuple[str, list[tuple[str, bool]]]:
+def list_environments(environment_store: EnvironmentStore, directory: Path) -> tuple[str, list[tuple[str, bool]]]:
     namespace, origin = project_namespace(directory)
-    base = f"projects/{namespace}"
-    manifest = _load_environment_manifest(store, base, origin)
+    manifest = environment_store.load_manifest(namespace, origin)
     environments = [(profile, details.get("example") is True) for profile, details in sorted(manifest["environments"].items())]
-    if not environments:
-        try:
-            data = json.loads(store.get_secret(_environment_entry(base, "default", "json")))
-        except (StoreError, json.JSONDecodeError):
-            pass
-        else:
-            if data.get("origin") == origin and isinstance(data.get("values"), dict):
-                environments.append(("default", _has_archived_example(store, base, "default")))
     return namespace, environments
+
+
+def show_environment(environment_store: EnvironmentStore, directory: Path, env_file: Path) -> tuple[str, dict[str, str]]:
+    namespace, origin = project_namespace(directory)
+    profile = environment_profile(env_file)
+    manifest = environment_store.load_manifest(namespace, origin)
+    details = manifest["environments"].get(profile)
+    if details is None or not details["variables"]:
+        return namespace, {}
+    return namespace, environment_store.load_variables(namespace, profile, origin)
 
 
 def _environment_entry(base: str, profile: str, suffix: str) -> str:
     return f"{base}/env.{suffix}" if profile == "default" else f"{base}/env.{profile}.{suffix}"
 
 
-def _has_archived_example(store: VaultStore, base: str, profile: str) -> bool:
+def _load_secret_payload(store: VaultStore, base: str, profile: str, origin: str) -> dict[str, str]:
     try:
-        store.get_secret(_environment_entry(base, profile, "example"))
-    except StoreError:
-        return False
-    return True
-
-
-def _load_environment_manifest(store: VaultStore, base: str, origin: str) -> EnvironmentManifest:
-    try:
-        manifest = json.loads(store.get_secret(f"{base}/environments.json"))
-    except StoreError:
-        return {"version": 1, "origin": origin, "environments": {}}
+        payload = json.loads(store.get_secret(_environment_entry(base, profile, "secrets.json")))
     except json.JSONDecodeError as exc:
-        raise StoreError("archived environment index has invalid data") from exc
-    if not isinstance(manifest, dict) or manifest.get("origin") != origin or not isinstance(manifest.get("environments"), dict):
-        raise StoreError("archived environment index does not match this origin")
-    environments = manifest["environments"]
-    if not all(isinstance(profile, str) and isinstance(details, dict) and all(isinstance(key, str) and isinstance(value, bool) for key, value in details.items()) for profile, details in environments.items()):
-        raise StoreError("archived environment index has invalid data")
-    version = manifest.get("version", 1)
-    if not isinstance(version, int):
-        raise StoreError("archived environment index has invalid data")
-    return {"version": version, "origin": origin, "environments": environments}
+        raise StoreError("encrypted environment payload has invalid data") from exc
+    if not isinstance(payload, dict) or set(payload) != {"version", "origin", "values"} or payload.get("version") != 3 or payload.get("origin") != origin:
+        raise StoreError("encrypted environment payload does not match this origin or format")
+    values = payload.get("values")
+    if not isinstance(values, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in values.items()):
+        raise StoreError("encrypted environment payload has invalid data")
+    return values
 
 
 def render_template(template: str, values: dict[str, str]) -> str:

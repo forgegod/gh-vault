@@ -10,7 +10,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 |---|---|
 | `test_cli.py` | Parser helpers, token metadata integration, profile listing, Git credential output filtering, and `run` / `env run` process-environment behavior using an in-memory store. |
 | `test_store.py` | Token and environment store lifecycle, restrictive permissions, payload/index isolation, replacement rules, validation, missing-secret errors, and a temporary executable fake `pass` backend. |
-| `test_vault_features.py` | Project-origin namespace normalization, ordinary and typed dotenv parsing, mocked GitHub token metadata, encrypted default and named environment archive/restore/list behavior, remote Actions type checks, `act` exports, and workflow-wiring checks. |
+| `test_vault_features.py` | Project-origin namespace normalization, ordinary and typed dotenv parsing, mocked GitHub token metadata, split default/named archive, restore, list, public show and leakage boundaries, remote Actions type checks, `act` exports, and workflow-wiring checks. |
 
 ## Local Contracts
 

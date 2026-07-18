@@ -101,7 +101,7 @@ git config credential.https://github.com.helper '!gh-vault git-credential'
 
 ## Project environment archive
 
-Archives store `.env` and named `.env.<profile>` values as separate encrypted entries in `pass`, identified by the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`). A paired `.env.example` or `.env.example.<profile>` template is archived when it exists.
+Archives split typed `.env` and `.env.<profile>` declarations by sensitivity under the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`): `variable` values use restrictive JSON below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/`, while `secret` values remain encrypted in `pass`. Unmarked local values are never archived. Templates are encrypted only for profiles containing secrets.
 
 ### Archive
 
@@ -116,7 +116,7 @@ gh-vault env archive --env-file .env.development --env-file .env.production
 gh-vault env archive --env-file .env.production --example-file deploy/production.template
 ```
 
-Named files use their profile name in the encrypted entry. `gh-vault env list` lists every archived `.env` / `.env.<profile>` variant and whether its matching template was archived.
+Named files use their profile name in both stores. `gh-vault env list` reads the value-free public index and lists every archived variant plus whether an encrypted template exists. `gh-vault env show [--env-file .env.<profile>]` prints only public variables and never reads `pass`; an empty profile prints `No archived variables`.
 
 ### Restore
 
@@ -127,9 +127,10 @@ gh-vault env restore --restore-example        # restore the archived template to
 gh-vault env restore --force --restore-example
 gh-vault env restore --env-file .env.production
 gh-vault env list
+gh-vault env show
 ```
 
-Restore checks that the archived origin matches the current checkout's `remote.origin.url`. `--env-file .env.<profile>` selects that named archive and uses `.env.example.<profile>` unless `--example-file` is supplied. It reconstructs the selected file by applying archived values onto the template: template lines with matching keys get the archived value; template lines without a key (comments, blank lines) are preserved; archived keys absent from the template are appended under a `# Local additions` section.
+Restore checks that every payload origin matches the current checkout. `--env-file .env.<profile>` selects that named archive and uses `.env.example.<profile>` unless `--example-file` is supplied. It merges public variables and encrypted secrets onto the local template while preserving comments and directives; archived keys absent from the template are appended under `# Local additions`. Variable-only restores require the local template and never access `pass`. `--restore-example` works only when an encrypted template exists. Legacy monolithic archives are not read implicitly by normal commands.
 
 ### Run with project environment
 

@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, runtime_environment, sync
-from gh_vault.envfiles import DotenvAssignment, archive_environment, list_environments, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment
+from gh_vault.envfiles import DotenvAssignment, archive_environment, list_environments, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment, show_environment
 from gh_vault.github import inspect_token
-from gh_vault.store import StoreError
+from gh_vault.store import EnvironmentStore, StoreError
 
 
 class MemoryVault:
@@ -213,13 +213,19 @@ def test_archive_and_restore_uses_template_comments(monkeypatch, tmp_path: Path)
     monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
     env = tmp_path / ".env"
     example = tmp_path / ".env.example"
-    env.write_text("API_KEY=alpha\nEXTRA=beta\n", encoding="utf-8")
-    example.write_text("# API access\nAPI_KEY=\n", encoding="utf-8")
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu-test-1\nEXTRA=local\n", encoding="utf-8")
+    example.write_text("# API access\n# gh-vault: secret\n# API_KEY=\n# gh-vault: variable\n# REGION=\n# EXTRA=\n", encoding="utf-8")
     vault = MemoryVault()
-    archive_environment(vault, tmp_path, env, example)  # type: ignore[arg-type]
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    public_text = "".join(path.read_text(encoding="utf-8") for path in public.root.rglob("*.json"))
+    assert "eu-test-1" in public_text
+    assert "alpha" not in public_text
+    assert "local" not in public_text
+    assert show_environment(public, tmp_path, env)[1] == {"REGION": "eu-test-1"}
     env.unlink()
-    restore_environment(vault, tmp_path, env, example, False, False)  # type: ignore[arg-type]
-    assert env.read_text(encoding="utf-8") == "# API access\nAPI_KEY=alpha\n\n# Local additions\nEXTRA=beta\n"
+    restore_environment(vault, public, tmp_path, env, example, False, False)  # type: ignore[arg-type]
+    assert env.read_text(encoding="utf-8") == "# API access\n# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu-test-1\n# EXTRA=\n"
     assert stat.S_IMODE(env.stat().st_mode) == 0o600
 
 
@@ -230,24 +236,24 @@ def test_archive_lists_and_restores_named_environments(monkeypatch, tmp_path: Pa
 
     monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
     vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
     production = tmp_path / ".env.production"
     development = tmp_path / ".env.development"
     production_example = tmp_path / ".env.example.production"
-    production.write_text("API_KEY=production\n", encoding="utf-8")
-    development.write_text("API_KEY=development\n", encoding="utf-8")
-    production_example.write_text("# Production\nAPI_KEY=\n", encoding="utf-8")
+    production.write_text("# gh-vault: variable\nREGION=production\n", encoding="utf-8")
+    development.write_text("# gh-vault: variable\nREGION=development\n", encoding="utf-8")
+    production_example.write_text("# Production\n# gh-vault: variable\n# REGION=\n", encoding="utf-8")
 
-    archive_environment(vault, tmp_path, production, production_example)  # type: ignore[arg-type]
-    archive_environment(vault, tmp_path, development, tmp_path / ".env.example.development")  # type: ignore[arg-type]
-    assert list_environments(vault, tmp_path) == ("github.com/owner/repo", [("development", False), ("production", True)])  # type: ignore[arg-type]
+    archive_environment(vault, public, tmp_path, production, production_example)  # type: ignore[arg-type]
+    archive_environment(vault, public, tmp_path, development, tmp_path / ".env.example.development")  # type: ignore[arg-type]
+    assert list_environments(public, tmp_path) == ("github.com/owner/repo", [("development", False), ("production", False)])
 
     production.unlink()
-    production_example.unlink()
-    restore_environment(vault, tmp_path, production, production_example, False, False)  # type: ignore[arg-type]
-    assert production.read_text(encoding="utf-8") == "# Production\nAPI_KEY=production\n"
+    restore_environment(vault, public, tmp_path, production, production_example, False, False)  # type: ignore[arg-type]
+    assert production.read_text(encoding="utf-8") == "# Production\n# gh-vault: variable\nREGION=production\n"
 
 
-def test_list_and_restore_support_legacy_default_archive(monkeypatch, tmp_path: Path) -> None:
+def test_list_and_restore_do_not_fallback_to_legacy_default_archive(monkeypatch, tmp_path: Path) -> None:
     class Result:
         returncode = 0
         stdout = "https://github.com/owner/repo.git\n"
@@ -256,11 +262,106 @@ def test_list_and_restore_support_legacy_default_archive(monkeypatch, tmp_path: 
     vault = MemoryVault()
     base = "projects/github.com/owner/repo"
     vault.values[f"{base}/env.json"] = '{"origin": "https://github.com/owner/repo.git", "values": {"API_KEY": "legacy"}, "version": 1}'
-    vault.values[f"{base}/env.example"] = "API_KEY=\n"
+    public = EnvironmentStore(tmp_path / "config")
 
-    assert list_environments(vault, tmp_path) == ("github.com/owner/repo", [("default", True)])  # type: ignore[arg-type]
-    restore_environment(vault, tmp_path, tmp_path / ".env", tmp_path / ".env.example", False, False)  # type: ignore[arg-type]
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == "API_KEY=legacy\n"
+    assert list_environments(public, tmp_path) == ("github.com/owner/repo", [])
+    with pytest.raises(StoreError, match="no archived environment"):
+        restore_environment(vault, public, tmp_path, tmp_path / ".env", tmp_path / ".env.example", False, False)  # type: ignore[arg-type]
+
+
+def test_variable_only_archive_and_show_never_use_the_vault(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    class NoVault:
+        def __getattr__(self, name):
+            raise AssertionError(f"vault access is forbidden: {name}")
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: variable\nREGION=eu-test-1\nLOCAL_ONLY=private\n", encoding="utf-8")
+    example.write_text("# gh-vault: variable\n# REGION=\n# LOCAL_ONLY=\n", encoding="utf-8")
+    public = EnvironmentStore(tmp_path / "config")
+    vault = NoVault()
+
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert show_environment(public, tmp_path, env)[1] == {"REGION": "eu-test-1"}
+    env.unlink()
+    restore_environment(vault, public, tmp_path, env, example, False, False)  # type: ignore[arg-type]
+    assert "REGION=eu-test-1" in env.read_text(encoding="utf-8")
+    assert "private" not in "".join(path.read_text(encoding="utf-8") for path in public.root.rglob("*.json"))
+
+    env.unlink()
+    example.unlink()
+    with pytest.raises(StoreError, match="requires a local template"):
+        restore_environment(vault, public, tmp_path, env, example, False, False)  # type: ignore[arg-type]
+
+
+def test_archive_type_transitions_remove_stale_payloads(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    events: list[str] = []
+
+    class RecordingVault(MemoryVault):
+        def put_secret(self, name: str, value: str) -> None:
+            events.append(f"put:{name}")
+            super().put_secret(name, value)
+
+        def remove_secret(self, name: str) -> None:
+            events.append(f"remove:{name}")
+            super().remove_secret(name)
+
+    class RecordingEnvironmentStore(EnvironmentStore):
+        def save_variables(self, namespace: str, profile: str, origin: str, values: dict[str, str]) -> None:
+            events.append("save:variables")
+            super().save_variables(namespace, profile, origin, values)
+
+        def remove_variables(self, namespace: str, profile: str) -> None:
+            events.append("remove:variables")
+            super().remove_variables(namespace, profile)
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    example.write_text("# gh-vault: secret\n# API_KEY=\n", encoding="utf-8")
+    vault = RecordingVault()
+    public = RecordingEnvironmentStore(tmp_path / "config")
+    secret_entry = "projects/github.com/owner/repo/env.secrets.json"
+    example_entry = "projects/github.com/owner/repo/env.example"
+
+    env.write_text("# gh-vault: secret\nAPI_KEY=secret-one\n", encoding="utf-8")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert secret_entry in vault.values and example_entry in vault.values
+
+    events.clear()
+    env.write_text("# gh-vault: variable\nAPI_KEY=public-one\n", encoding="utf-8")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert show_environment(public, tmp_path, env)[1] == {"API_KEY": "public-one"}
+    assert secret_entry not in vault.values and example_entry not in vault.values
+    assert events.index("save:variables") < events.index(f"remove:{secret_entry}")
+
+    events.clear()
+    env.write_text("# gh-vault: secret\nAPI_KEY=secret-two\n", encoding="utf-8")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert show_environment(public, tmp_path, env)[1] == {}
+    assert secret_entry in vault.values and example_entry in vault.values
+    assert events.index(f"put:{secret_entry}") < events.index("remove:variables")
+
+    events.clear()
+    env.write_text("LOCAL_ONLY=local\n", encoding="utf-8")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert list_environments(public, tmp_path)[1] == []
+    assert secret_entry not in vault.values and example_entry not in vault.values
+
+    events.clear()
+    env.write_text("# gh-vault: variable\nAPI_KEY=public-two\n", encoding="utf-8")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+    assert show_environment(public, tmp_path, env)[1] == {"API_KEY": "public-two"}
+    assert not any(event.startswith(("put:", "remove:")) for event in events)
 
 
 def test_export_act_and_workflow_check(tmp_path: Path) -> None:

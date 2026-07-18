@@ -197,6 +197,15 @@ class EnvironmentStore:
         path = self._namespace_dir(namespace) / "environments.json"
         _write_restrictive_json(self.config_dir, path, {"version": ENVIRONMENT_INDEX_VERSION, "origin": origin, "environments": environments})
 
+    def remove_manifest(self, namespace: str) -> None:
+        path = self._namespace_dir(namespace) / "environments.json"
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise StoreError(f"cannot remove {path}: {exc}") from exc
+
     def _variables_path(self, namespace: str, profile: str) -> Path:
         self._require_profile(profile)
         name = "env.variables.json" if profile == "default" else f"env.{profile}.variables.json"

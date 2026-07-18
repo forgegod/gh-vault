@@ -86,7 +86,7 @@ Project-wide durable preferences (style, workflow, conventions) live in user mem
 ## Architectural decisions
 
 - **Agent harness protected by tirith.sh.** Reading passwords or access tokens is prohibited. Extract variables from `.env` / config files without relaying their values; use environment variables by importing them for Bash execution. `***` in output is a tirith redaction marker, not a literal value — never "fix" it to a variable ref.
-- **Encrypted vault backend.** Tokens, archived project environment values, and templates belong only in `pass` entries below `gh-vault/`; project files and metadata config must never contain plaintext secret values or a fallback.
+- **Split vault backend.** Tokens, secret environment values, and eligible templates belong only in `pass` entries below `gh-vault/`. Explicit `# gh-vault: variable` values may use the restrictive XDG archive store; local and secret values must never enter it or metadata indexes.
 - **Intentional credential output boundary.** Token values must not reach stdout except for the exact `git-credential get` response Git requires.
 
 ## Codebase exploration — mandatory graph-first workflow

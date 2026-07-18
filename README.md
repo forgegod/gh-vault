@@ -168,11 +168,15 @@ gh-vault env restore --force                  # overwrite existing .env
 gh-vault env restore --restore-example        # restore the archived template too
 gh-vault env restore --force --restore-example
 gh-vault env restore --env-file .env.production
+gh-vault env restore --key API_KEY            # append only API_KEY to the target .env
+gh-vault env restore --key API_KEY --env-file .env.production
 gh-vault env list
 gh-vault env show
 ```
 
 Restore checks that every payload origin matches the current checkout. `--env-file .env.<profile>` selects that named archive and uses `.env.example.<profile>` unless `--example-file` is supplied. It merges public variables and encrypted secrets onto the local template while preserving comments and directives; archived keys absent from the template are appended under `# Local additions`. Variable-only restores require the local template and never access `pass`. `--restore-example` works only when an encrypted template exists. Legacy monolithic archives are not read implicitly by normal commands.
+
+`--key NAME` writes only the named archived key to the target `.env` with a synthetic `# gh-vault: secret` or `# gh-vault: variable` directive line. The type is read from the archive: the key is in the public variable store if it was archived as a variable, otherwise in the encrypted secret store. If the target `.env` already exists, the directive line is appended; otherwise the file is created with the directive + assignment only. `--key` does not require `--force` and refuses to combine with `--restore-example`. The key name must match `[A-Za-z_][A-Za-z0-9_]*`; an unknown key raises `StoreError` naming the target env file. The appended line is exactly two lines (`# gh-vault: <kind>\nKEY=VALUE\n`), so it composes cleanly with existing content as long as the file is already newline-terminated.
 
 ### Run with project environment
 

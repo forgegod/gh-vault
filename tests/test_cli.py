@@ -215,6 +215,32 @@ def test_run_act_dispatches_the_explicit_act_command(monkeypatch: pytest.MonkeyP
     assert captured == {"env_file": Path(".env.test"), "program": ["--", "act", "workflow_dispatch"], "directory": tmp_path}
 
 
+def test_env_restore_dispatch_passes_key_to_restore_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = cli.build_parser().parse_args(["env", "restore", "--env-file", ".env.test", "--key", "API_KEY"])
+    captured: dict[str, object] = {}
+
+    def fake_restore_environment(store, environment_store, directory, env_file, example_file, force, restore_example, key):
+        captured.update(
+            env_file=env_file,
+            example_file=example_file,
+            force=force,
+            restore_example=restore_example,
+            key=key,
+        )
+        return "github.com/owner/repo"
+
+    monkeypatch.setattr(cli, "restore_environment", fake_restore_environment)
+
+    assert cli.dispatch(args, MemoryStore(), tmp_path) == 0  # type: ignore[arg-type]
+    assert captured == {
+        "env_file": Path(".env.test"),
+        "example_file": Path(".env.example.test"),
+        "force": False,
+        "restore_example": False,
+        "key": "API_KEY",
+    }
+
+
 def test_env_archive_accepts_repeated_profile_files_and_list_reports_templates(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["env", "archive", "--env-file", ".env.development", "--env-file", ".env.production"])
     archived: list[tuple[Path, Path]] = []

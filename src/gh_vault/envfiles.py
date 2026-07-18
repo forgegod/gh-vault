@@ -333,9 +333,9 @@ def migrate_environment_archive(store: VaultStore, environment_store: Environmen
     return ArchiveMigrationResult(namespace, profile, len(variables), len(secrets), local_count)
 
 
-def restore_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path, force: bool, restore_example: bool) -> str:
-    if env_file.exists() and not force:
-        raise StoreError(f"refusing to overwrite {env_file}; use --force")
+def restore_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path, force: bool, restore_example: bool, key: str | None = None) -> str:
+    if key is not None and not KEY.fullmatch(key):
+        raise StoreError(f"invalid key name: {key}")
     namespace, origin = project_namespace(directory)
     base = f"projects/{namespace}"
     profile = environment_profile(env_file)
@@ -348,6 +348,23 @@ def restore_environment(store: VaultStore, environment_store: EnvironmentStore, 
     if variables.keys() & secrets.keys():
         raise StoreError("environment payloads contain duplicate keys")
     values = {**variables, **secrets}
+    if key is not None:
+        if restore_example:
+            raise StoreError("--restore-example cannot be combined with --key")
+        if key not in values:
+            raise StoreError(f"key {key!r} is not archived for {env_file.name}")
+        kind = "secret" if key in secrets else "variable"
+        if env_file.exists():
+            with env_file.open("r", encoding="utf-8") as handle:
+                existing = handle.read()
+            if existing and not existing.endswith("\n"):
+                existing = existing + "\n"
+            _write_private(env_file, existing + f"# gh-vault: {kind}\n{key}={format_dotenv_value(values[key])}\n")
+        else:
+            _write_private(env_file, f"# gh-vault: {kind}\n{key}={format_dotenv_value(values[key])}\n")
+        return namespace
+    if env_file.exists() and not force:
+        raise StoreError(f"refusing to overwrite {env_file}; use --force")
     archived_example = store.get_secret(_environment_entry(base, profile, "example")) if details["example"] else None
     try:
         local_example = example_file.read_text(encoding="utf-8") if example_file.exists() else None

@@ -44,10 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
     archive.add_argument("--env-file", type=Path, action="append", help=".env or .env.<profile>; repeat to archive multiple variants")
     archive.add_argument("--example-file", type=Path, help="template path for one selected environment; defaults to the matching .env.example variant")
-    restore = env.add_parser("restore", help="restore one typed project environment", description="Restore a project environment from its public variable payload and encrypted secret payload when present.")
+    restore = env.add_parser("restore", help="restore one typed project environment", description="Restore a project environment from its public variable payload and encrypted secret payload when present. With --key, write only the named key to the target .env with a synthetic directive line.")
     restore.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to restore")
     restore.add_argument("--example-file", type=Path, help="template path; defaults to the matching .env.example variant")
-    restore.add_argument("--force", action="store_true", help="overwrite an existing environment file"); restore.add_argument("--restore-example", action="store_true", help="restore the archived template")
+    restore.add_argument("--force", action="store_true", help="overwrite an existing environment file"); restore.add_argument("--restore-example", action="store_true", help="restore the archived template too"); restore.add_argument("--key", help="write only the named key to the target .env with a synthetic directive line; refuses --restore-example")
     env.add_parser("list", help="list archived environment variants", description="List archived .env and .env.<profile> variants and whether each has an archived template.")
     show = env.add_parser("show", help="show archived public variables", description="Print only the selected profile's clear-text variable payload without reading the password store."); show.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to inspect")
     env_migrate = env.add_parser("migrate", help="migrate one legacy encrypted environment archive", description="Partition one legacy encrypted archive using reviewed local typed declarations, verify the split payloads, then remove the legacy entry."); env_migrate.add_argument("--env-file", type=Path, default=Path(".env"), help="migrated .env or .env.<profile> declaration file")
@@ -214,7 +214,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
                 print(f"Archived {env_file} for {archive_environment(store, environment_store, directory, env_file, example_file)}.")
         elif args.env_command == "restore":
             example_file = args.example_file or example_file_for(args.env_file)
-            print(f"Restored {args.env_file} for {restore_environment(store, environment_store, directory, args.env_file, example_file, args.force, args.restore_example)}.")
+            print(f"Restored {args.env_file} for {restore_environment(store, environment_store, directory, args.env_file, example_file, args.force, args.restore_example, args.key)}.")
         elif args.env_command == "list":
             namespace, environments = list_environments(environment_store, directory)
             if not environments:

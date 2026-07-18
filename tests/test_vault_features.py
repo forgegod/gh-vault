@@ -292,6 +292,109 @@ def test_list_and_restore_do_not_fallback_to_legacy_default_archive(monkeypatch,
         restore_environment(vault, public, tmp_path, tmp_path / ".env", tmp_path / ".env.example", False, False)  # type: ignore[arg-type]
 
 
+def test_restore_with_key_writes_a_single_directive_tagged_line(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu-test-1\n", encoding="utf-8")
+    example.write_text("# gh-vault: secret\n# API_KEY=\n# gh-vault: variable\n# REGION=\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+    env.unlink()
+    namespace = restore_environment(vault, public, tmp_path, env, example, False, False, "API_KEY")  # type: ignore[arg-type]
+    assert namespace == "github.com/owner/repo"
+    assert env.read_text(encoding="utf-8") == "# gh-vault: secret\nAPI_KEY=alpha\n"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+    env.unlink()
+    restore_environment(vault, public, tmp_path, env, example, False, False, "REGION")  # type: ignore[arg-type]
+    assert env.read_text(encoding="utf-8") == "# gh-vault: variable\nREGION=eu-test-1\n"
+
+
+def test_restore_with_key_rejects_missing_key(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n", encoding="utf-8")
+    example.write_text("# gh-vault: secret\n# API_KEY=\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+    env.unlink()
+    with pytest.raises(StoreError, match="not archived"):
+        restore_environment(vault, public, tmp_path, env, example, False, False, "MISSING")  # type: ignore[arg-type]
+
+
+def test_restore_with_key_rejects_combine_with_restore_example(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n", encoding="utf-8")
+    example.write_text("# gh-vault: secret\n# API_KEY=\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+    env.unlink()
+    with pytest.raises(StoreError, match="--restore-example cannot be combined"):
+        restore_environment(vault, public, tmp_path, env, example, False, True, "API_KEY")  # type: ignore[arg-type]
+
+
+def test_restore_with_key_appends_to_existing_file_without_force(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu-test-1\n", encoding="utf-8")
+    example.write_text("# gh-vault: secret\n# API_KEY=\n# gh-vault: variable\n# REGION=\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+    env.unlink()
+    env.write_text("LOCAL_ONLY=keep\n", encoding="utf-8")
+    restore_environment(vault, public, tmp_path, env, example, False, False, "API_KEY")  # type: ignore[arg-type]
+    assert env.read_text(encoding="utf-8") == "LOCAL_ONLY=keep\n# gh-vault: secret\nAPI_KEY=alpha\n"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+
+
+def test_restore_with_key_rejects_invalid_key_name(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n", encoding="utf-8")
+    example.write_text("# gh-vault: secret\n# API_KEY=\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+    env.unlink()
+    with pytest.raises(StoreError, match="invalid key name"):
+        restore_environment(vault, public, tmp_path, env, example, False, False, "1-BAD")  # type: ignore[arg-type]
+
+
 def test_variable_only_archive_and_show_never_use_the_vault(monkeypatch, tmp_path: Path) -> None:
     class Result:
         returncode = 0

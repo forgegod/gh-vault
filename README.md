@@ -13,8 +13,48 @@
 sudo apt install pass gnupg
 gpg --full-generate-key
 pass init YOUR_GPG_KEY_ID
+```
+
+## Installation
+
+Install `gh-vault` from PyPI:
+
+```sh
+uv tool install gh-vault
+```
+
+This installs the released version into the active uv tool environment and provides the `gh-vault` console script on your `PATH`.
+
+## Development installation
+
+When working from a repository checkout — either to develop `gh-vault` itself or to test a local change — pick the mode that matches how you intend to use the checkout.
+
+### Live edit mode (`--editable`)
+
+```sh
 uv tool install --editable .
 ```
+
+Installs a `.pth` shim that points back at `src/` in this checkout. Edits to the source tree take effect the next time you invoke `gh-vault` — no reinstall needed. Use this when you are developing `gh-vault` itself.
+
+### Snapshot mode (`--force --from .`)
+
+```sh
+uv tool install --force --from . gh-vault
+```
+
+Builds a regular install from this checkout and copies the package into `~/.local/share/uv/tools/gh-vault/`. The installed tool is frozen at the current source state; subsequent edits are invisible until you reinstall. Use this when you want the checkout's current state to behave like a release build, or when you do not want local edits to bleed into the running tool.
+
+### When to choose which
+
+| Goal | Mode |
+|---|---|
+| Developing or debugging `gh-vault` | Live edit (`--editable .`) |
+| Trying the current checkout as a release-like build | Snapshot (`--force --from . gh-vault`) |
+| Switching back to live edits after a snapshot install | `uv tool install --editable .` (overwrites the snapshot) |
+| Returning to the released version after any checkout install | `uv tool install --force gh-vault` |
+
+The `--force` flag in snapshot mode only matters when `gh-vault` is already installed in that tool venv — it forces overwrite instead of skipping. Omit it on a clean install.
 
 ## Storage locations
 

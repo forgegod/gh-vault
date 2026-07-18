@@ -51,12 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
     show = env.add_parser("show", help="show archived public variables", description="Print only the selected profile's clear-text variable payload without reading the password store."); show.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to inspect")
     env_migrate = env.add_parser("migrate", help="migrate one legacy encrypted environment archive", description="Partition one legacy encrypted archive using reviewed local typed declarations, verify the split payloads, then remove the legacy entry."); env_migrate.add_argument("--env-file", type=Path, default=Path(".env"), help="migrated .env or .env.<profile> declaration file")
     env_run = env.add_parser("run", help="run a command with project environment values", description="Run a command with only values marked by adjacent gh-vault secret or variable directives."); env_run.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); env_run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
-    secrets = commands.add_parser("secrets", help="sync or export declared Actions values", description="Synchronize, export, or verify .env values marked for GitHub Actions.").add_subparsers(dest="secrets_command", required=True)
-    sync_parser = secrets.add_parser("sync", help="sync declared Actions values to GitHub", description="Set gh-vault secret declarations as GitHub Secrets and variable declarations as GitHub Variables."); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
-    act = secrets.add_parser("export-act", help="export declared Actions values for act", description="Write gh-vault secret declarations to .secrets and variable declarations to .vars for local act runs."); act.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); act.add_argument("--output", type=Path, default=Path(".secrets"), help="output path for secrets"); act.add_argument("--var-output", type=Path, default=Path(".vars"), help="output path for variables")
-    secret_check = secrets.add_parser("check", help="verify declared Actions types on GitHub", description="Compare typed gh-vault declarations with both GitHub Actions stores without changing .env."); secret_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); secret_check.add_argument("--repo", help="target repository; defaults to origin")
-    variables = commands.add_parser("variables", help="manage repository variables", description="Import GitHub Actions Variables as typed dotenv declarations.").add_subparsers(dest="variables_command", required=True)
-    variable_import = variables.add_parser("import", help="import GitHub Variables into .env", description="Import repository Variables with gh-vault variable directives without replacing local values unless forced."); variable_import.add_argument("--repo", help="source repository; defaults to origin"); variable_import.add_argument("--force", action="store_true", help="overwrite existing gh-vault variable settings")
+    secret = commands.add_parser("secret", help="sync, export, or check declared Actions secrets", description="Synchronize, export, or verify .env secret declarations against GitHub Secrets.").add_subparsers(dest="secret_command", required=True)
+    sync_parser = secret.add_parser("sync", help="sync declared Actions secrets to GitHub", description="Set gh-vault secret declarations as GitHub Secrets and variable declarations as GitHub Variables."); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
+    act = secret.add_parser("export-act", help="export declared Actions values for act", description="Write gh-vault secret declarations to .secrets and variable declarations to .vars for local act runs."); act.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); act.add_argument("--output", type=Path, default=Path(".secrets"), help="output path for secrets"); act.add_argument("--var-output", type=Path, default=Path(".vars"), help="output path for variables")
+    secret_check = secret.add_parser("check", help="verify declared Actions secrets on GitHub", description="Compare typed gh-vault secret declarations with GitHub Secrets without changing .env."); secret_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); secret_check.add_argument("--repo", help="target repository; defaults to origin")
+    variable = commands.add_parser("variable", help="import or check declared Actions variables", description="Import GitHub Actions Variables as typed dotenv declarations or verify them against local declarations.").add_subparsers(dest="variable_command", required=True)
+    variable_import = variable.add_parser("import", help="import GitHub Variables into .env", description="Import repository Variables with gh-vault variable directives without replacing local values unless forced."); variable_import.add_argument("--repo", help="source repository; defaults to origin"); variable_import.add_argument("--force", action="store_true", help="overwrite existing gh-vault variable settings")
+    variable_check = variable.add_parser("check", help="verify declared Actions variables on GitHub", description="Compare typed gh-vault variable declarations with GitHub Variables without changing .env."); variable_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); variable_check.add_argument("--repo", help="target repository; defaults to origin")
     actions = commands.add_parser("actions", help="migrate legacy Actions declarations", description="Migrate legacy GH_VAR_ and GH_SECRET_ declarations for review before archive migration.").add_subparsers(dest="actions_command", required=True)
     migrate_env = actions.add_parser("migrate-env", help="rewrite legacy Actions declarations", description="Rewrite legacy prefixed declarations in one environment and its matching template to adjacent typed directives."); migrate_env.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to migrate")
     workflow = commands.add_parser("workflow", help="validate GitHub Actions secret wiring", description="Check workflow references against locally declared GitHub Actions values.").add_subparsers(dest="workflow_command", required=True)
@@ -136,6 +137,34 @@ def _git_credential(store: VaultStore, operation: str) -> int:
     return 0
 
 
+def _render_secret_check(env_file: Path, repo: str) -> int:
+    status = remote_secret_status(env_file, repo)
+    for name in status.secret_to_variable:
+        print(f"{name}: GitHub variable -> gh-vault secret")
+    for name in status.remote_only_secrets:
+        print(f"GitHub secret {name} is not declared in .env")
+    if status.missing_secrets:
+        print(f"Missing GitHub secrets: {', '.join(status.missing_secrets)}")
+    if any((status.missing_secrets, status.remote_only_secrets, status.secret_to_variable)):
+        return 1
+    print("All local secret values are configured on GitHub.")
+    return 0
+
+
+def _render_variable_check(env_file: Path, repo: str) -> int:
+    status = remote_secret_status(env_file, repo)
+    for name in status.variable_to_secret:
+        print(f"{name}: GitHub secret -> gh-vault variable")
+    for name in status.remote_only_variables:
+        print(f"GitHub variable {name} is not declared in .env")
+    if status.missing_variables:
+        print(f"Missing GitHub variables: {', '.join(status.missing_variables)}")
+    if any((status.missing_variables, status.remote_only_variables, status.variable_to_secret)):
+        return 1
+    print("All local variable values are configured on GitHub.")
+    return 0
+
+
 def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path.cwd()) -> int:
     if args.command == "set": return _set(store, args)
     if args.command == "list": return _list(store)
@@ -182,33 +211,19 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
             print(f"Migrated {args.env_file.name} ({result.profile}) for {result.namespace}: {result.variables} variable value(s) moved to clear text, {result.secrets} secret value(s) retained encrypted, {result.local} local-only value(s) removed from gh-vault.")
         else: return _env_run(args.env_file, args.program)
         return 0
-    if args.command == "secrets":
-        if args.secrets_command == "check":
-            status = remote_secret_status(args.env_file, args.repo or default_repo(directory))
-            for name in status.secret_to_variable:
-                print(f"{name}: GitHub variable -> gh-vault secret")
-            for name in status.variable_to_secret:
-                print(f"{name}: GitHub secret -> gh-vault variable")
-            for name in status.remote_only_secrets:
-                print(f"GitHub secret {name} is not declared in .env")
-            for name in status.remote_only_variables:
-                print(f"GitHub variable {name} is not declared in .env")
-            if status.missing_secrets:
-                print(f"Missing GitHub secrets: {', '.join(status.missing_secrets)}")
-            if status.missing_variables:
-                print(f"Missing GitHub variables: {', '.join(status.missing_variables)}")
-            if any((status.missing_secrets, status.missing_variables, status.remote_only_secrets, status.remote_only_variables, status.secret_to_variable, status.variable_to_secret)):
-                return 1
-            print("All local Actions values are configured on GitHub.")
-            return 0
+    if args.command == "secret":
+        if args.secret_command == "check":
+            return _render_secret_check(args.env_file, args.repo or default_repo(directory))
         entries = action_values(args.env_file)
-        if args.secrets_command == "sync":
+        if args.secret_command == "sync":
             result = sync(entries, args.repo or default_repo(directory), args.dry_run, args.migrate_types, args.prune)
             prune_summary = f"; {'would prune' if args.dry_run else 'pruned'} {result.pruned} remote value(s)" if args.prune else ""
             print(f"{'Would sync' if args.dry_run else 'Synced'} {result.synced} entry(s){prune_summary}.")
         else: secret_count, var_count = export_act(entries, args.output, args.var_output); print(f"Wrote {secret_count} secret(s) and {var_count} variable(s).")
         return 0
-    if args.command == "variables":
+    if args.command == "variable":
+        if args.variable_command == "check":
+            return _render_variable_check(args.env_file, args.repo or default_repo(directory))
         target, count = import_variables(directory, args.repo or default_repo(directory), args.force)
         print(f"Imported {count} variable(s) into {target}.")
         return 0

@@ -146,34 +146,55 @@ def remote_secret_status(env_file: Path, repo: str) -> RemoteValueStatus:
     )
 
 
-def sync(entries: list[ActionValue], repo: str, dry_run: bool, migrate_types: bool = False, prune: bool = False) -> SyncResult:
+def sync(
+    entries: list[ActionValue],
+    repo: str,
+    kind: Literal["secret", "variable"],
+    dry_run: bool,
+    migrate_types: bool = False,
+    prune: bool = False,
+) -> SyncResult:
     if migrate_types and prune:
         raise StoreError("--migrate-types and --prune cannot be combined")
-    remote_secrets = _remote_names("secret", repo) if migrate_types or prune else set()
-    remote_variables = _remote_names("variable", repo) if migrate_types or prune else set()
-    stale: list[tuple[str, str]] = []
+    mismatched = [entry for entry in entries if entry.kind != kind]
+    if mismatched:
+        names = ", ".join(sorted(entry.name for entry in mismatched))
+        raise StoreError(f"{kind} sync received entries with other kinds: {names}")
+    remote_target = _remote_names(kind, repo) if migrate_types or prune else set()
+    remote_opposite = _remote_names("variable" if kind == "secret" else "secret", repo) if migrate_types else set()
+    prune_names: list[str] = []
     if prune:
         local_names = {entry.name for entry in entries}
-        stale = [("secret", name) for name in sorted(remote_secrets - local_names)] + [("variable", name) for name in sorted(remote_variables - local_names)]
-        for kind, name in stale:
+        prune_names = sorted(remote_target - local_names)
+        for name in prune_names:
             if not dry_run:
-                result = subprocess.run(["gh", kind, "delete" if kind == "variable" else "remove", name, "--repo", repo], text=True, capture_output=True, check=False)
+                result = subprocess.run(
+                    ["gh", kind, "delete" if kind == "variable" else "remove", name, "--repo", repo],
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
                 if result.returncode:
                     raise StoreError(f"cannot prune stale {kind} '{name}': {result.stderr.strip() or 'gh failed'}")
     for entry in entries:
-        opposite_kind = "variable" if entry.kind == "secret" else "secret"
-        opposite_names = remote_variables if entry.kind == "secret" else remote_secrets
-        if entry.name in opposite_names:
-            if migrate_types and not dry_run:
-                result = subprocess.run(["gh", opposite_kind, "delete" if opposite_kind == "variable" else "remove", entry.name, "--repo", repo], text=True, capture_output=True, check=False)
-                if result.returncode:
-                    raise StoreError(f"cannot migrate '{entry.name}': failed to remove stale {opposite_kind}: {result.stderr.strip() or 'gh failed'}")
-        command = ["gh", "secret" if entry.kind == "secret" else "variable", "set", entry.name, "--repo", repo]
+        if migrate_types and entry.name in remote_opposite and not dry_run:
+            opposite = "variable" if kind == "secret" else "secret"
+            result = subprocess.run(
+                ["gh", opposite, "delete" if opposite == "variable" else "remove", entry.name, "--repo", repo],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode:
+                raise StoreError(f"cannot migrate '{entry.name}': failed to remove stale {opposite}: {result.stderr.strip() or 'gh failed'}")
+        command = ["gh", kind, "set", entry.name, "--repo", repo]
         if not dry_run:
             result = subprocess.run(command, input=entry.value, text=True, capture_output=True, check=False)
             if result.returncode:
-                raise StoreError(f"cannot set {entry.kind} '{entry.name}'; stale counterpart was removed and must be restored manually: {result.stderr.strip() or 'gh failed'}")
-    return SyncResult(len(entries), len(stale))
+                raise StoreError(
+                    f"cannot set {kind} '{entry.name}'; stale counterpart was removed and must be restored manually: {result.stderr.strip() or 'gh failed'}"
+                )
+    return SyncResult(len(entries), len(prune_names))
 
 
 def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) -> tuple[int, int]:

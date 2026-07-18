@@ -650,7 +650,7 @@ def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> 
         return Result()
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
-    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", False, True) == SyncResult(1, 0)
+    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False, migrate_types=True) == SyncResult(1, 0)
     assert calls == [
         (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
         (["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
@@ -659,7 +659,34 @@ def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> 
     ]
 
 
-def test_sync_prunes_only_remote_names_absent_from_env(monkeypatch) -> None:
+def test_sync_migrates_a_stale_secret_when_variable_sync_runs(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        input_value = kwargs.get("input")
+        calls.append((command, input_value if isinstance(input_value, str) else None))
+        if command[:3] == ["gh", "secret", "list"]:
+            return Result("REGION\n")
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    assert sync([ActionValue("REGION", "variable", "eu")], "owner/repo", "variable", False, migrate_types=True) == SyncResult(1, 0)
+    assert calls == [
+        (["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "secret", "remove", "REGION", "--repo", "owner/repo"], None),
+        (["gh", "variable", "set", "REGION", "--repo", "owner/repo"], "eu"),
+    ]
+
+
+def test_sync_prunes_only_target_store_names_absent_locally(monkeypatch) -> None:
     calls: list[tuple[list[str], str | None]] = []
 
     class Result:
@@ -675,15 +702,138 @@ def test_sync_prunes_only_remote_names_absent_from_env(monkeypatch) -> None:
         if command[:3] == ["gh", "secret", "list"]:
             return Result("CONFIGURED\nSTALE_SECRET\n")
         if command[:3] == ["gh", "variable", "list"]:
+            return Result("STALE_VARIABLE\n")
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    assert sync([ActionValue("CONFIGURED", "secret", "alpha")], "owner/repo", "secret", False, prune=True) == SyncResult(1, 1)
+    assert calls == [
+        (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "secret", "remove", "STALE_SECRET", "--repo", "owner/repo"], None),
+        (["gh", "secret", "set", "CONFIGURED", "--repo", "owner/repo"], "alpha"),
+    ]
+
+
+def test_sync_variable_prune_only_targets_variables(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        input_value = kwargs.get("input")
+        calls.append((command, input_value if isinstance(input_value, str) else None))
+        if command[:3] == ["gh", "variable", "list"]:
             return Result("CONFIGURED\nSTALE_VARIABLE\n")
         return Result()
 
     monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
-    assert sync([ActionValue("CONFIGURED", "secret", "alpha")], "owner/repo", False, prune=True) == SyncResult(1, 2)
+    assert sync([ActionValue("CONFIGURED", "variable", "eu")], "owner/repo", "variable", False, prune=True) == SyncResult(1, 1)
     assert calls == [
-        (["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
         (["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"], None),
-        (["gh", "secret", "remove", "STALE_SECRET", "--repo", "owner/repo"], None),
         (["gh", "variable", "delete", "STALE_VARIABLE", "--repo", "owner/repo"], None),
-        (["gh", "secret", "set", "CONFIGURED", "--repo", "owner/repo"], "alpha"),
+        (["gh", "variable", "set", "CONFIGURED", "--repo", "owner/repo"], "eu"),
     ]
+
+
+def test_sync_ordinary_never_lists_or_deletes(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda command, **kwargs: calls.append((command, kwargs.get("input"))) or Result())
+    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False) == SyncResult(1, 0)
+    assert calls == [
+        (["gh", "secret", "set", "API_KEY", "--repo", "owner/repo"], "alpha"),
+    ]
+
+
+def test_sync_ordinary_variable_sets_only_variables(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda command, **kwargs: calls.append((command, kwargs.get("input"))) or Result())
+    assert sync([ActionValue("REGION", "variable", "eu")], "owner/repo", "variable", False) == SyncResult(1, 0)
+    assert calls == [
+        (["gh", "variable", "set", "REGION", "--repo", "owner/repo"], "eu"),
+    ]
+
+
+def test_sync_dry_run_reports_counts_without_mutation(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    assert sync(
+        [ActionValue("REGION", "variable", "eu")],
+        "owner/repo",
+        "variable",
+        True,
+        migrate_types=True,
+    ) == SyncResult(1, 0)
+    assert calls == [
+        ["gh", "variable", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
+        ["gh", "secret", "list", "--repo", "owner/repo", "--json", "name", "--jq", ".[].name"],
+    ]
+
+
+def test_sync_rejects_mismatched_entry_kinds() -> None:
+    with pytest.raises(StoreError, match="received entries with other kinds"):
+        sync([ActionValue("API_KEY", "secret", "alpha"), ActionValue("REGION", "variable", "eu")], "owner/repo", "secret", False)
+
+
+def test_sync_failure_after_migration_delete_preserves_manual_restore_hint(monkeypatch) -> None:
+    class ListResult:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    class VariableListResult:
+        returncode = 0
+        stderr = ""
+        stdout = "API_KEY\n"
+
+    class OkResult:
+        returncode = 0
+        stderr = ""
+
+    class FailureResult:
+        returncode = 1
+        stderr = "synthetic set failure"
+
+    def fake_run(command: list[str], **kwargs: object):
+        if command[:3] == ["gh", "secret", "list"]:
+            return ListResult()
+        if command[:3] == ["gh", "variable", "list"]:
+            return VariableListResult()
+        if command[:2] == ["gh", "variable"] and command[2] == "delete":
+            return OkResult()
+        return FailureResult()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    with pytest.raises(StoreError, match="stale counterpart was removed and must be restored manually"):
+        sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False, migrate_types=True)
+
+
+def test_sync_combined_prune_and_migrate_types_is_rejected() -> None:
+    with pytest.raises(StoreError, match="cannot be combined"):
+        sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False, prune=True, migrate_types=True)

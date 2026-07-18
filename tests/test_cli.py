@@ -68,10 +68,11 @@ def test_add_command_is_removed() -> None:
         (["env", "show", "--help"], "Print only the selected profile's clear-text variable payload"),
         (["env", "migrate", "--help"], "Partition one legacy encrypted archive"),
         (["actions", "migrate-env", "--help"], "Rewrite legacy prefixed declarations"),
-        (["secrets", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
-        (["secrets", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
-        (["secrets", "check", "--help"], "Compare typed gh-vault declarations"),
-        (["variables", "import", "--help"], "Import repository Variables with gh-vault variable directives"),
+        (["secret", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
+        (["secret", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
+        (["secret", "check", "--help"], "Compare typed gh-vault secret declarations with GitHub Secrets"),
+        (["variable", "import", "--help"], "Import repository Variables with gh-vault variable directives"),
+        (["variable", "check", "--help"], "Compare typed gh-vault variable declarations with GitHub Variables"),
         (["workflow", "check", "--help"], "Report missing, mismatched, and unreferenced"),
     ],
 )
@@ -80,6 +81,27 @@ def test_subtool_help_explains_its_operation(arguments: list[str], description: 
         cli.build_parser().parse_args(arguments)
 
     assert description in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["secrets", "variables"])
+def test_parser_rejects_removed_plural_command_groups(command: str) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.build_parser().parse_args([command, "--help"])
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["secret", "sync"],
+        ["secret", "export-act"],
+        ["secret", "check", "--repo", "owner/repo"],
+        ["variable", "import", "--force"],
+        ["variable", "check", "--repo", "owner/repo"],
+    ],
+)
+def test_parser_accepts_singular_action_command_groups(arguments: list[str]) -> None:
+    args = cli.build_parser().parse_args(arguments)
+    assert args.command in {"secret", "variable"}
 
 
 def test_set_discovers_scopes_and_expiration(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -196,19 +218,20 @@ def test_explicit_migration_commands_dispatch_without_values(monkeypatch: pytest
 
 
 def test_parser_accepts_variable_import_and_secret_check_commands() -> None:
-    args = cli.build_parser().parse_args(["variables", "import", "--force"])
-    assert args.variables_command == "import"
+    args = cli.build_parser().parse_args(["variable", "import", "--force"])
+    assert args.variable_command == "import"
     assert args.force is True
-    assert cli.build_parser().parse_args(["secrets", "check"]).secrets_command == "check"
+    assert cli.build_parser().parse_args(["secret", "check"]).secret_command == "check"
+    assert cli.build_parser().parse_args(["variable", "check"]).variable_command == "check"
 
 
 def test_sync_rejects_prune_with_type_migration() -> None:
     with pytest.raises(SystemExit, match="2"):
-        cli.build_parser().parse_args(["secrets", "sync", "--prune", "--migrate-types"])
+        cli.build_parser().parse_args(["secret", "sync", "--prune", "--migrate-types"])
 
 
 def test_sync_dry_run_reports_prune_count(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["secrets", "sync", "--dry-run", "--prune"])
+    args = cli.build_parser().parse_args(["secret", "sync", "--dry-run", "--prune"])
     monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "value")])
     monkeypatch.setattr(cli, "sync", lambda *args: SyncResult(1, 2))
 
@@ -239,7 +262,7 @@ def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPat
 
 
 def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["secrets", "check"])
+    args = cli.build_parser().parse_args(["secret", "check"])
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus(["API_KEY"], [], [], [], [], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
@@ -247,7 +270,7 @@ def test_secret_check_reports_missing_remote_secrets(monkeypatch: pytest.MonkeyP
 
 
 def test_secret_check_reports_secret_to_variable_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["secrets", "check"])
+    args = cli.build_parser().parse_args(["secret", "check"])
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], ["SIGNIN_CLIENT_ID"], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
@@ -255,19 +278,75 @@ def test_secret_check_reports_secret_to_variable_type_drift(monkeypatch: pytest.
 
 
 def test_secret_check_reports_remote_secrets_absent_from_env(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["secrets", "check"])
+    args = cli.build_parser().parse_args(["secret", "check"])
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], ["OWNCLOUD_SSH_PASSWORD"], [], [], []))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out == "GitHub secret OWNCLOUD_SSH_PASSWORD is not declared in .env\n"
 
 
-def test_secret_check_reports_variable_to_secret_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    args = cli.build_parser().parse_args(["secrets", "check"])
+def test_secret_check_omits_variable_only_findings(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secret", "check"])
+    monkeypatch.setattr(
+        cli,
+        "remote_secret_status",
+        lambda *args: RemoteValueStatus([], ["MISSING_VAR"], [], ["REMOTE_VAR"], [], ["JMED_SMTP_FROM"]),
+    )
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "All local secret values are configured on GitHub.\n"
+
+
+def test_secret_check_reports_success_when_only_secrets_match(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secret", "check"])
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], [], []))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "All local secret values are configured on GitHub.\n"
+
+
+def test_variable_check_reports_missing_remote_variables(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "check"])
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], ["REGION"], [], [], [], []))
+
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "Missing GitHub variables: REGION\n"
+
+
+def test_variable_check_reports_variable_to_secret_type_drift(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "check"])
     monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], [], ["JMED_SMTP_FROM"]))
 
     assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
     assert capsys.readouterr().out == "JMED_SMTP_FROM: GitHub secret -> gh-vault variable\n"
+
+
+def test_variable_check_reports_remote_variables_absent_from_env(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "check"])
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], ["REMOTE_VAR"], [], []))
+
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "GitHub variable REMOTE_VAR is not declared in .env\n"
+
+
+def test_variable_check_omits_secret_only_findings(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "check"])
+    monkeypatch.setattr(
+        cli,
+        "remote_secret_status",
+        lambda *args: RemoteValueStatus(["MISSING_SECRET"], [], ["ORPHAN_SECRET"], [], ["SIGNIN_CLIENT_ID"], []),
+    )
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "All local variable values are configured on GitHub.\n"
+
+
+def test_variable_check_reports_success_when_only_variables_match(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["variable", "check"])
+    monkeypatch.setattr(cli, "remote_secret_status", lambda *args: RemoteValueStatus([], [], [], [], [], []))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "All local variable values are configured on GitHub.\n"
 
 
 def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:

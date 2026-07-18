@@ -2,7 +2,7 @@
 
 ![gh-vault](assets/logo-1024.png)
 
-`gh-vault` keeps named GitHub tokens and project `.env` values in GPG-encrypted `pass` entries. It validates and records token scope and expiration metadata, archives and restores per-project environments, syncs declared GitHub Actions values, exports files for local `act` runs, and checks workflow wiring. It never keeps secret values in the checkout or ordinary command output.
+`gh-vault` keeps named GitHub tokens and secret project values in GPG-encrypted `pass` entries while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, and checks workflow wiring. Secret values never enter public metadata or ordinary command output.
 
 ## Requirements
 
@@ -21,7 +21,9 @@ uv tool install --editable .
 | Artifact | Location | Mode |
 |---|---|---|
 | Token values | `pass` entries under `gh-vault/<profile>` | GPG-encrypted |
-| Archived environments | `pass` entries under `gh-vault/projects/<host>/<owner>/<repo>/` | GPG-encrypted |
+| Archived secret values and eligible templates | `pass` entries under `gh-vault/projects/<host>/<owner>/<repo>/` | GPG-encrypted |
+| Archived public variable values | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/env[.<profile>].variables.json` | `0600`; parent directories `0700` |
+| Value-free environment index | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/environments.json` | `0600`; parent directories `0700` |
 | Profile metadata (scopes, notes, expiration) | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` | `0600` |
 | Generated `.env`, `.secrets`, `.vars` | Project checkout (gitignored) | `0600` |
 
@@ -157,6 +159,8 @@ LOCAL_ONLY=local
 
 The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped.
 
+The directive is gh-vault's opt-in declaration for archive storage, GitHub synchronization, and workflow validation. GitHub may contain manually managed Secrets or Variables, but gh-vault does not treat them as managed workflow values without the matching local directive.
+
 ### Migrate legacy declarations and archives
 
 Migration is explicitly two-stage so classification is reviewed before any value enters clear-text storage:
@@ -206,6 +210,31 @@ Compares every typed declaration against both GitHub Actions stores. The adjacen
 
 Never modifies `.env`.
 
+Before pushing changes that affect Actions declarations, run this remote review sequence:
+
+```sh
+gh-vault secrets sync --dry-run
+gh-vault secrets check
+```
+
+Local commits use `gh-vault workflow check` as the offline wiring gate; remote secret checks are not a local-commit prerequisite.
+
+### Type transitions
+
+Changing a directive changes both archive storage and GitHub synchronization eligibility. An unclassified local-only value is not archived by gh-vault. GitHub uses separate Secret and Variable stores, so cross-type remote changes are deliberately explicit.
+
+| Source | Target | Exact directive edit | Resulting archive | Archive command | GitHub behavior and follow-up |
+|---|---|---|---|---|---|
+| `secret` | `secret` | Keep `# gh-vault: secret`; edit value only | Encrypted `pass` payload | `gh-vault env archive` | Ordinary `gh-vault secrets sync` updates it |
+| `variable` | `variable` | Keep `# gh-vault: variable`; edit value only | Public XDG payload | `gh-vault env archive` | Ordinary `gh-vault secrets sync` updates it |
+| local-only | local-only | Keep no directive; edit value only | No gh-vault archive | `gh-vault env archive` removes any stale archive | Remote values are untouched |
+| `secret` | `variable` | Replace `secret` with `variable` | Public XDG payload; stale encrypted payload removed after verification | `gh-vault env archive` | Run `secrets sync --dry-run`, then `secrets sync --migrate-types` |
+| `variable` | `secret` | Replace `variable` with `secret` | Encrypted `pass` payload; stale public payload removed after verification | `gh-vault env archive` | Run `secrets sync --dry-run`, then `secrets sync --migrate-types` |
+| local-only | `secret` | Add `# gh-vault: secret` immediately above the assignment | Encrypted `pass` payload | `gh-vault env archive` | Review with `secrets sync --dry-run`, then ordinary `secrets sync` |
+| local-only | `variable` | Add `# gh-vault: variable` immediately above the assignment | Public XDG payload | `gh-vault env archive` | Review with `secrets sync --dry-run`, then ordinary `secrets sync` |
+| `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secrets sync --prune`, run the full pre-push review sequence above |
+| `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote value remains. Before `secrets sync --prune`, run the full pre-push review sequence above |
+
 ### Import repository Variables into `.env`
 
 ```sh
@@ -240,7 +269,7 @@ Scans `.github/workflows/*.yml` and `*.yaml` for `secrets.NAME` and `vars.NAME` 
 |---|---|---|
 | `error` | Unreferenced local value | A typed declaration in `.env` is never referenced by any workflow |
 | `error` | Type mismatch | Workflow uses `vars.NAME` but `.env` marks `NAME` as `secret`, or vice versa |
-| `error` | Fallback order | Expression puts `vars.X` before `secrets.X` in a `||` chain |
+| `error` | Fallback order | Expression puts `vars.X` before `secrets.X` in a `\|\|` chain |
 | `warning` | Orphan reference | Workflow references a name not declared locally and with no fallback default |
 
 Excludes GitHub-provided names like `GITHUB_TOKEN`. Exits nonzero if any errors exist (warnings alone do not fail). `--fix` prints a suggested `env:` block for unreferenced local values. Does not impose repository-specific namespace mappings.
@@ -264,12 +293,25 @@ Excludes GitHub-provided names like `GITHUB_TOKEN`. Exits nonzero if any errors 
 
 Rejected syntax: `$(command)`, `${variable}`, backticks, and any construct requiring shell evaluation. This is deliberate — `.env` files are data, not executable scripts.
 
+Templates retain classification without activating assignments:
+
+```dotenv
+# gh-vault: variable
+# REGION=
+
+# gh-vault: secret
+# API_KEY=
+```
+
+The directive must remain immediately adjacent to the commented assignment. This keeps conventional `.env.example` placeholders while preserving type metadata for migration and restore.
+
 Values with embedded newlines are stored as `@base64:` when written to `.env` or exported for `act`.
 
 ## Security model
 
-- Tokens, archived values, and archive templates live only in `pass` under `gh-vault/`.
-- Metadata is mode `0600` under `${XDG_CONFIG_HOME:-~/.config}/gh-vault/`; it contains no secret values.
+- Tokens, secret environment values, and eligible archive templates live only in `pass` under `gh-vault/`.
+- Only values explicitly marked `# gh-vault: variable` may enter the public XDG archive. Operators must classify them as safe for clear-text local storage before archiving or migration.
+- Public variable payloads and value-free indexes are mode `0600` below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/`, with mode-`0700` directories. Secret and local-only values never enter those files or `config.json`.
 - `.env`, `.secrets`, and `.vars` are ignored by Git. Generated files are mode `0600`.
 - The only token stdout is the exact credential-helper response Git requires.
 - Token validation against `https://api.github.com/user` sends the token to GitHub over HTTPS; no third party is involved.

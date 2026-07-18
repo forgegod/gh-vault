@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, runtime_environment, suggested_env, sync
+from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, run_act, runtime_environment, suggested_env, sync
 from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
 from .store import EnvironmentStore, Profile, StoreError, VaultStore
@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status", help="show the active profile", description="Show the profile selected as the default GitHub token.")
     remove = commands.add_parser("remove", help="delete a profile", description="Delete a token profile and its encrypted token from the vault."); remove.add_argument("name", type=profile_name, help="profile name")
     run = commands.add_parser("run", help="run a command with a token", description="Run a child command with the selected token in its environment only."); run.add_argument("--name", type=profile_name, help="profile name; defaults to the active profile"); run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
+    run_act_parser = commands.add_parser("run-act", help="run act with ephemeral typed values", description="Run act with temporary 0600 secret and variable files that are removed when the child exits."); run_act_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); run_act_parser.add_argument("program", nargs=argparse.REMAINDER, help="act command to run, after --")
     credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol", description="Serve Git's credential-helper protocol for HTTPS requests to github.com only."); credential.add_argument("operation", choices=("get", "store", "erase"), help="Git credential-helper operation")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
@@ -139,6 +140,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "status": return _status(store)
     if args.command == "remove": store.remove(args.name); print(f"Removed profile: {args.name}"); return 0
     if args.command == "run": return _run(store, args.name, args.program)
+    if args.command == "run-act": return run_act(args.env_file, args.program, directory)
     if args.command == "git-credential": return _git_credential(store, args.operation)
 
     if args.command == "env":

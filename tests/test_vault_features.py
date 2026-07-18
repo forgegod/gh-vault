@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, runtime_environment, sync
+from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, run_act, runtime_environment, sync
 from gh_vault.envfiles import DotenvAssignment, archive_environment, list_environments, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment, show_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import EnvironmentStore, StoreError
@@ -377,6 +377,77 @@ def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("env:\n  API_KEY: ${{ secrets.API_KEY }}\n  REGION: ${{ vars.REGION }}\n", encoding="utf-8")
     assert check_workflows(tmp_path, entries) == {"unreferenced": [], "type_mismatch": [], "order": [], "orphan": []}
+
+
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_run_act_uses_private_ephemeral_files(monkeypatch, tmp_path: Path, returncode: int) -> None:
+    env = tmp_path / ".env"
+    env.write_text("LOCAL_ONLY=excluded\n# gh-vault: secret\nAPI_KEY=synthetic\n# gh-vault: variable\nREGION=eu-test-1\n", encoding="utf-8")
+    observed: dict[str, Path] = {}
+
+    class Result:
+        def __init__(self, code: int) -> None:
+            self.returncode = code
+
+    def fake_run(command, *, cwd, check):
+        assert command[:2] == ["act", "workflow_dispatch"]
+        assert command[-4] == "--secret-file"
+        assert command[-2] == "--var-file"
+        secrets_path = Path(command[-3])
+        variables_path = Path(command[-1])
+        observed["root"] = secrets_path.parent
+        assert cwd == tmp_path and check is False
+        assert stat.S_IMODE(secrets_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(secrets_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(variables_path.stat().st_mode) == 0o600
+        assert secrets_path.read_text(encoding="utf-8") == "API_KEY=synthetic\n"
+        assert variables_path.read_text(encoding="utf-8") == "REGION=eu-test-1\n"
+        return Result(returncode)
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert run_act(env, ["--", "act", "workflow_dispatch"], tmp_path) == returncode
+    assert not observed["root"].exists()
+
+
+def test_run_act_creates_empty_files_for_no_typed_values(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("LOCAL_ONLY=excluded\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        assert Path(command[-3]).read_text(encoding="utf-8") == ""
+        assert Path(command[-1]).read_text(encoding="utf-8") == ""
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+    assert run_act(env, ["--", "act"], tmp_path) == 0
+
+
+def test_run_act_cleans_up_when_the_child_cannot_start(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    observed: dict[str, Path] = {}
+
+    def fake_run(command, **kwargs):
+        observed["root"] = Path(command[-3]).parent
+        raise OSError("synthetic launch failure")
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    with pytest.raises(StoreError, match="cannot run act"):
+        run_act(env, ["--", "act"], tmp_path)
+    assert not observed["root"].exists()
+
+
+@pytest.mark.parametrize("flag", ["--secret-file", "--secret-file=custom", "--var-file", "--var-file=custom"])
+def test_run_act_rejects_managed_file_flags_before_creating_tempfiles(monkeypatch, tmp_path: Path, flag: str) -> None:
+    monkeypatch.setattr("gh_vault.actions.tempfile.TemporaryDirectory", lambda **kwargs: pytest.fail("temporary directory created"))
+
+    with pytest.raises(StoreError, match="do not supply them manually"):
+        run_act(tmp_path / ".env", ["--", "act", flag], tmp_path)
 
 
 def test_workflow_check_omits_defaulted_and_github_orphans(tmp_path: Path) -> None:

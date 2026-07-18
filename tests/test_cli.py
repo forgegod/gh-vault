@@ -59,6 +59,7 @@ def test_add_command_is_removed() -> None:
         (["status", "--help"], "Show the profile selected"),
         (["remove", "--help"], "Delete a token profile"),
         (["run", "--help"], "Run a child command"),
+        (["run-act", "--help"], "Run act with temporary 0600 secret and variable files"),
         (["git-credential", "--help"], "Serve Git's credential-helper protocol"),
         (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
@@ -137,6 +138,20 @@ def test_env_run_injects_declared_actions_values(monkeypatch: pytest.MonkeyPatch
     assert captured["arguments"] == ["program", "argument"]
     assert captured["environment"]["REGION"] == "eu"  # type: ignore[index]
     assert captured["environment"]["TOKEN"] == "secret-token"  # type: ignore[index]
+
+
+def test_run_act_dispatches_the_explicit_act_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    args = cli.build_parser().parse_args(["run-act", "--env-file", ".env.test", "--", "act", "workflow_dispatch"])
+    captured: dict[str, object] = {}
+
+    def fake_run_act(env_file: Path, program: list[str], directory: Path) -> int:
+        captured.update(env_file=env_file, program=program, directory=directory)
+        return 7
+
+    monkeypatch.setattr(cli, "run_act", fake_run_act)
+
+    assert cli.dispatch(args, MemoryStore(), tmp_path) == 7  # type: ignore[arg-type]
+    assert captured == {"env_file": Path(".env.test"), "program": ["--", "act", "workflow_dispatch"], "directory": tmp_path}
 
 
 def test_env_archive_accepts_repeated_profile_files_and_list_reports_templates(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

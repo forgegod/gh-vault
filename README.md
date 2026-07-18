@@ -204,16 +204,15 @@ gh-vault variables import --force    # overwrite existing variable declarations
 
 Reads repository variables via `gh variable list` and writes standard keys with `# gh-vault: variable` directives. Targets `.env` when it exists, otherwise writes commented assignments in `.env.example`. Existing entries are retained unless `--force` is supplied; force overwrites only an existing `variable` declaration and refuses to reclassify a secret or local-only key.
 
-### Export values for local `act` runs
+### Run local Actions with ephemeral values
 
 ```sh
-gh-vault secrets export-act
-act workflow_dispatch --secret-file .secrets --var-file .vars
+gh-vault run-act -- act workflow_dispatch
 ```
 
-`export-act` splits typed `.env` entries into two files: `.secrets` from `secret` declarations and `.vars` from `variable` declarations. Unmarked local values are excluded. Both generated files are mode `0600` and gitignored. Multi-line values are base64-encoded with the `@base64:` prefix that `act` consumes natively.
+`run-act` creates separate secret and variable files in a mode-`0700` temporary directory, appends `--secret-file` and `--var-file` to the supplied `act` command, and removes the files after success or child failure. Both files always exist at mode `0600`, even when empty. Unmarked local values are excluded. Supplying either managed file flag manually is rejected. `SIGKILL` or a host crash can prevent normal cleanup.
 
-The two-flag invocation is required because [act](https://github.com/nektos/act) populates `secrets.*` from `--secret-file` only — it does not map `vars.*` from a secret file. Without `--var-file .vars`, workflow references to `vars.X` resolve to empty and the run fails. If a workflow cannot use separate variable files, add `vars.X || secrets.X` fallbacks in the workflow YAML.
+`gh-vault secrets export-act` remains available when explicit persistent `.secrets` and `.vars` files are required. Multi-line values use the `@base64:` prefix understood by [act](https://github.com/nektos/act).
 
 ### Validate workflow wiring
 

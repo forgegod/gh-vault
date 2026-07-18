@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -186,6 +188,33 @@ def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) 
             target.write_text("\n".join(grouped[kind]) + "\n", encoding="utf-8")
             target.chmod(0o600)
     return len(grouped["secret"]), len(grouped["variable"])
+
+
+def run_act(env_file: Path, program: list[str], directory: Path) -> int:
+    if not program or program[0] != "--" or len(program) < 2 or Path(program[1]).name != "act":
+        raise StoreError("run-act requires an act command after --")
+    command = program[1:]
+    forbidden = ("--secret-file", "--var-file")
+    if any(argument == flag or argument.startswith(flag + "=") for argument in command for flag in forbidden):
+        raise StoreError("run-act manages --secret-file and --var-file; do not supply them manually")
+    entries = action_values(env_file)
+    with tempfile.TemporaryDirectory(prefix="gh-vault-act-") as temporary:
+        root = Path(temporary)
+        os.chmod(root, 0o700)
+        secrets_path = root / "secrets.env"
+        variables_path = root / "variables.env"
+        _write_private(secrets_path, "")
+        _write_private(variables_path, "")
+        export_act(entries, secrets_path, variables_path)
+        try:
+            result = subprocess.run(
+                [*command, "--secret-file", str(secrets_path), "--var-file", str(variables_path)],
+                cwd=directory,
+                check=False,
+            )
+        except OSError as exc:
+            raise StoreError(f"cannot run act: {exc}") from exc
+        return result.returncode
 
 
 def _finding(path: Path, line: int, severity: str, name: str, message: str) -> dict[str, str | int]:

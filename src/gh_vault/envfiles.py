@@ -25,6 +25,15 @@ class DotenvAssignment:
     commented: bool
 
 
+@dataclass(frozen=True)
+class ArchiveMigrationResult:
+    namespace: str
+    profile: str
+    variables: int
+    secrets: int
+    local: int
+
+
 def project_namespace(directory: Path) -> tuple[str, str]:
     result = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=directory, text=True, capture_output=True, check=False)
     origin = result.stdout.strip()
@@ -233,6 +242,95 @@ def archive_environment(store: VaultStore, environment_store: EnvironmentStore, 
     else:
         environment_store.remove_manifest(namespace)
     return namespace
+
+
+def migrate_environment_archive(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> ArchiveMigrationResult:
+    namespace, origin = project_namespace(directory)
+    profile = environment_profile(env_file)
+    base = f"projects/{namespace}"
+    declaration_file = env_file if env_file.exists() else example_file
+    if not declaration_file.exists():
+        raise StoreError(f"archive migration requires {env_file} or {example_file}")
+    declarations = parse_typed_dotenv(declaration_file, include_commented=declaration_file == example_file)
+    kinds = {entry.key: entry.kind for entry in declarations if entry.kind != "local"}
+    legacy_entry = _environment_entry(base, profile, "json")
+    try:
+        legacy = json.loads(store.get_secret(legacy_entry))
+    except json.JSONDecodeError as exc:
+        raise StoreError(f"legacy archive for {env_file.name} has invalid data") from exc
+    if not isinstance(legacy, dict) or set(legacy) != {"version", "origin", "values"} or legacy.get("version") != 2 or legacy.get("origin") != origin:
+        raise StoreError(f"legacy archive for {env_file.name} does not match this origin or format")
+    values = legacy.get("values")
+    if not isinstance(values, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in values.items()):
+        raise StoreError(f"legacy archive for {env_file.name} has invalid data")
+
+    normalized: dict[str, str] = {}
+    for key, value in values.items():
+        target = key.removeprefix("GH_VAR_").removeprefix("GH_SECRET_")
+        if target in normalized:
+            raise StoreError(f"legacy archive for {env_file.name} contains duplicate target key {target}")
+        normalized[target] = value
+    variables = {key: value for key, value in normalized.items() if kinds.get(key) == "variable"}
+    secrets = {key: value for key, value in normalized.items() if kinds.get(key) == "secret"}
+    local_count = len(normalized) - len(variables) - len(secrets)
+
+    manifest = environment_store.load_manifest(namespace, origin)
+    environments = dict(manifest["environments"])
+    existing = environments.get(profile)
+    example: str | None = None
+    if secrets:
+        try:
+            example = store.get_secret(_environment_entry(base, profile, "example"))
+        except StoreError:
+            pass
+    expected = {"variables": bool(variables), "secrets": bool(secrets), "example": example is not None}
+    if existing is not None:
+        current_variables = environment_store.load_variables(namespace, profile, origin) if existing["variables"] else {}
+        current_secrets = _load_secret_payload(store, base, profile, origin) if existing["secrets"] else {}
+        current_example = store.get_secret(_environment_entry(base, profile, "example")) if existing["example"] else None
+        if existing != expected or current_variables != variables or current_secrets != secrets or current_example != example:
+            raise StoreError(f"split archive for {env_file.name} already exists with different data")
+        store.remove_secret(legacy_entry)
+        return ArchiveMigrationResult(namespace, profile, len(variables), len(secrets), local_count)
+
+    destination_variables = environment_store.load_variables(namespace, profile, origin)
+    if destination_variables and destination_variables != variables:
+        raise StoreError(f"split archive for {env_file.name} already has a different variable payload")
+    try:
+        store.get_secret(_environment_entry(base, profile, "secrets.json"))
+    except StoreError:
+        destination_secrets: dict[str, str] | None = None
+    else:
+        destination_secrets = _load_secret_payload(store, base, profile, origin)
+    if destination_secrets is not None and destination_secrets != secrets:
+        raise StoreError(f"split archive for {env_file.name} already has a different encrypted payload")
+
+    if secrets:
+        payload = {"version": 3, "origin": origin, "values": secrets}
+        store.put_secret(_environment_entry(base, profile, "secrets.json"), json.dumps(payload, sort_keys=True))
+        if _load_secret_payload(store, base, profile, origin) != secrets:
+            raise StoreError("encrypted environment payload verification failed")
+    if variables:
+        environment_store.save_variables(namespace, profile, origin, variables)
+        if environment_store.load_variables(namespace, profile, origin) != variables:
+            raise StoreError("environment variable payload verification failed")
+    if not secrets:
+        try:
+            store.remove_secret(_environment_entry(base, profile, "example"))
+        except StoreError:
+            pass
+    if variables or secrets:
+        environments[profile] = expected
+    else:
+        environments.pop(profile, None)
+    if environments:
+        environment_store.save_manifest(namespace, origin, environments)
+        if environment_store.load_manifest(namespace, origin)["environments"] != environments:
+            raise StoreError("environment index verification failed")
+    else:
+        environment_store.remove_manifest(namespace)
+    store.remove_secret(legacy_entry)
+    return ArchiveMigrationResult(namespace, profile, len(variables), len(secrets), local_count)
 
 
 def restore_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path, force: bool, restore_example: bool) -> str:

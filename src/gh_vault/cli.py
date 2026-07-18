@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, remote_secret_status, run_act, runtime_environment, suggested_env, sync
-from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, restore_environment, show_environment
+from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, remote_secret_status, run_act, runtime_environment, suggested_env, sync
+from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
 from .store import EnvironmentStore, Profile, StoreError, VaultStore
 
@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("--force", action="store_true", help="overwrite an existing environment file"); restore.add_argument("--restore-example", action="store_true", help="restore the archived template")
     env.add_parser("list", help="list archived environment variants", description="List archived .env and .env.<profile> variants and whether each has an archived template.")
     show = env.add_parser("show", help="show archived public variables", description="Print only the selected profile's clear-text variable payload without reading the password store."); show.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to inspect")
+    env_migrate = env.add_parser("migrate", help="migrate one legacy encrypted environment archive", description="Partition one legacy encrypted archive using reviewed local typed declarations, verify the split payloads, then remove the legacy entry."); env_migrate.add_argument("--env-file", type=Path, default=Path(".env"), help="migrated .env or .env.<profile> declaration file")
     env_run = env.add_parser("run", help="run a command with project environment values", description="Run a command with only values marked by adjacent gh-vault secret or variable directives."); env_run.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); env_run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
     secrets = commands.add_parser("secrets", help="sync or export declared Actions values", description="Synchronize, export, or verify .env values marked for GitHub Actions.").add_subparsers(dest="secrets_command", required=True)
     sync_parser = secrets.add_parser("sync", help="sync declared Actions values to GitHub", description="Set gh-vault secret declarations as GitHub Secrets and variable declarations as GitHub Variables."); sync_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); sync_parser.add_argument("--repo", help="target repository; defaults to origin"); sync_parser.add_argument("--dry-run", action="store_true", help="show the count without changing GitHub"); type_actions = sync_parser.add_mutually_exclusive_group(); type_actions.add_argument("--migrate-types", action="store_true", help="remove a same-name remote value of the opposite type before sync"); type_actions.add_argument("--prune", action="store_true", help="remove remote values whose names are absent from .env; never migrate types")
@@ -56,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     secret_check = secrets.add_parser("check", help="verify declared Actions types on GitHub", description="Compare typed gh-vault declarations with both GitHub Actions stores without changing .env."); secret_check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); secret_check.add_argument("--repo", help="target repository; defaults to origin")
     variables = commands.add_parser("variables", help="manage repository variables", description="Import GitHub Actions Variables as typed dotenv declarations.").add_subparsers(dest="variables_command", required=True)
     variable_import = variables.add_parser("import", help="import GitHub Variables into .env", description="Import repository Variables with gh-vault variable directives without replacing local values unless forced."); variable_import.add_argument("--repo", help="source repository; defaults to origin"); variable_import.add_argument("--force", action="store_true", help="overwrite existing gh-vault variable settings")
+    actions = commands.add_parser("actions", help="migrate legacy Actions declarations", description="Migrate legacy GH_VAR_ and GH_SECRET_ declarations for review before archive migration.").add_subparsers(dest="actions_command", required=True)
+    migrate_env = actions.add_parser("migrate-env", help="rewrite legacy Actions declarations", description="Rewrite legacy prefixed declarations in one environment and its matching template to adjacent typed directives."); migrate_env.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to migrate")
     workflow = commands.add_parser("workflow", help="validate GitHub Actions secret wiring", description="Check workflow references against locally declared GitHub Actions values.").add_subparsers(dest="workflow_command", required=True)
     check = workflow.add_parser("check", help="check workflow Actions references", description="Report missing, mismatched, and unreferenced GitHub Actions values used by workflows."); check.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); check.add_argument("--json", action="store_true", help="print results as JSON"); check.add_argument("--fix", action="store_true", help="print suggested workflow environment entries")
     return parser
@@ -143,6 +146,11 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "run-act": return run_act(args.env_file, args.program, directory)
     if args.command == "git-credential": return _git_credential(store, args.operation)
 
+    if args.command == "actions":
+        env_count, example_count = migrate_env_source(args.env_file)
+        print(f"Migrated {env_count} declaration(s) in {args.env_file} and {example_count} in {example_file_for(args.env_file)}.")
+        return 0
+
     if args.command == "env":
         environment_store = EnvironmentStore(getattr(store, "config_dir", None))
         if args.env_command == "archive":
@@ -169,6 +177,9 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
             else:
                 for name, value in sorted(values.items()):
                     print(f"{name}={format_dotenv_value(value)}")
+        elif args.env_command == "migrate":
+            result = migrate_environment_archive(store, environment_store, directory, args.env_file, example_file_for(args.env_file))
+            print(f"Migrated {args.env_file.name} ({result.profile}) for {result.namespace}: {result.variables} variable value(s) moved to clear text, {result.secrets} secret value(s) retained encrypted, {result.local} local-only value(s) removed from gh-vault.")
         else: return _env_run(args.env_file, args.program)
         return 0
     if args.command == "secrets":

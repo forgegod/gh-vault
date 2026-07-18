@@ -10,11 +10,11 @@ Production package for storing named GitHub tokens and project environment archi
 |---|---|
 | `__init__.py` | Package identity and runtime version. |
 | `__main__.py` | Module entry point delegating to the CLI. |
-| `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
+| `cli.py` | Command dispatch for profiles, archives, explicit migrations, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config and public environment persistence, `pass` integration, and backend errors. |
-| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive, public inspection, and reconstruction. |
+| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive migration, public inspection, and reconstruction. |
 | `github.py` | GitHub token metadata inspection without exposing token values. |
-| `actions.py` | GitHub Actions value selection, remote-variable import, `gh` sync, persistent exports, ephemeral `act` execution, and workflow references. |
+| `actions.py` | GitHub Actions value selection, explicit legacy declaration migration, remote-variable import, `gh` sync, persistent exports, ephemeral `act` execution, and workflow references. |
 
 ## Local Contracts
 
@@ -34,6 +34,7 @@ Production package for storing named GitHub tokens and project environment archi
 - Typed dotenv parsing recognizes only an adjacent `# gh-vault: secret` or `# gh-vault: variable` directive, rejects duplicate and legacy-prefixed declarations, and reads commented template assignments only when explicitly requested. Ordinary `parse_dotenv()` behavior remains directive-agnostic.
 - `env run -- <command> ...` execs a child with only typed `secret` and `variable` declarations under their ordinary keys; unmarked local values are excluded. The conservative dotenv parser decodes quotes and valid escapes without sourcing the file.
 - `run-act -- act ...` creates mode-`0600` secret and variable files beneath a mode-`0700` temporary directory, appends both managed file flags, rejects caller-supplied file flags before allocation, and removes the directory after normal child completion.
+- Migration is two-stage and explicit. `actions migrate-env` atomically rewrites only legacy-prefixed source/template assignments after full preflight validation. `env migrate` is the sole legacy archive reader; it partitions by reviewed directives, verifies destination payloads and index, rejects conflicting destinations, and removes the legacy payload last.
 - Actions sync accepts only typed declarations and sends values to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type. `--prune` removes remote-only names but leaves names declared under either local type and is mutually exclusive with type migration.
 - `secrets check` verifies typed names in both `.env` and GitHub without modifying `.env`; the directive selects the required GitHub type, so opposite remote types are nonzero directional drift. Missing and remote-only values are nonzero. `workflow check` reports unknown workflow references only when they lack a fallback and are not GitHub-provided names; every finding is one located `file:line: severity: explanation` line. `variables import` reads repository variables with `gh variable list`, writes standard keys with adjacent `variable` directives, preserves commented template assignments, and force-overwrites only existing variable declarations.
 - Every nested command provides operation-specific `--help` text explaining its effect and its relevant GitHub Actions type mapping.

@@ -8,6 +8,7 @@ import pytest
 
 from gh_vault import cli
 from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult
+from gh_vault.envfiles import ArchiveMigrationResult
 from gh_vault.github import TokenMetadata
 from gh_vault.store import Profile, StoreError
 
@@ -65,6 +66,8 @@ def test_add_command_is_removed() -> None:
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
         (["env", "show", "--help"], "Print only the selected profile's clear-text variable payload"),
+        (["env", "migrate", "--help"], "Partition one legacy encrypted archive"),
+        (["actions", "migrate-env", "--help"], "Rewrite legacy prefixed declarations"),
         (["secrets", "sync", "--help"], "Set gh-vault secret declarations as GitHub Secrets"),
         (["secrets", "export-act", "--help"], "Write gh-vault secret declarations to .secrets"),
         (["secrets", "check", "--help"], "Compare typed gh-vault declarations"),
@@ -178,6 +181,18 @@ def test_env_run_requires_an_explicit_command_separator() -> None:
 def test_parser_rejects_removed_legacy_migration_command() -> None:
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["migrate"])
+
+
+def test_explicit_migration_commands_dispatch_without_values(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    source = cli.build_parser().parse_args(["actions", "migrate-env", "--env-file", ".env.production"])
+    monkeypatch.setattr(cli, "migrate_env_source", lambda path: (2, 1))
+    assert cli.dispatch(source, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "Migrated 2 declaration(s) in .env.production and 1 in .env.example.production.\n"
+
+    archive = cli.build_parser().parse_args(["env", "migrate", "--env-file", ".env.production"])
+    monkeypatch.setattr(cli, "migrate_environment_archive", lambda *args: ArchiveMigrationResult("github.com/owner/repo", "production", 2, 1, 3))
+    assert cli.dispatch(archive, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "Migrated .env.production (production) for github.com/owner/repo: 2 variable value(s) moved to clear text, 1 secret value(s) retained encrypted, 3 local-only value(s) removed from gh-vault.\n"
 
 
 def test_parser_accepts_variable_import_and_secret_check_commands() -> None:

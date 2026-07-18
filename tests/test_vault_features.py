@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, run_act, runtime_environment, sync
-from gh_vault.envfiles import DotenvAssignment, archive_environment, list_environments, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment, show_environment
+from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, migrate_env_source, remote_secret_status, run_act, runtime_environment, sync
+from gh_vault.envfiles import ArchiveMigrationResult, DotenvAssignment, archive_environment, list_environments, migrate_environment_archive, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment, show_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import EnvironmentStore, StoreError
 
@@ -176,6 +176,29 @@ def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:
 
     with pytest.raises(StoreError, match="unsupported dotenv syntax"):
         parse_dotenv(env)
+
+
+def test_migrate_env_source_rewrites_environment_and_commented_template(tmp_path: Path) -> None:
+    env = tmp_path / ".env.production"
+    example = tmp_path / ".env.example.production"
+    env.write_text("# Deployment\nGH_VAR_REGION=eu-west-1\nGH_SECRET_API_KEY=synthetic\nLOCAL_ONLY=keep\n", encoding="utf-8")
+    example.write_text("# Template\n  # GH_VAR_REGION=eu-west-1\n# GH_SECRET_API_KEY=\n", encoding="utf-8")
+
+    assert migrate_env_source(env) == (2, 2)
+    assert env.read_text(encoding="utf-8") == "# Deployment\n# gh-vault: variable\nREGION=eu-west-1\n# gh-vault: secret\nAPI_KEY=synthetic\nLOCAL_ONLY=keep\n"
+    assert example.read_text(encoding="utf-8") == "# Template\n  # gh-vault: variable\n  # REGION=eu-west-1\n# gh-vault: secret\n# API_KEY=\n"
+    assert stat.S_IMODE(env.stat().st_mode) == 0o600
+    assert stat.S_IMODE(example.stat().st_mode) == 0o600
+
+
+def test_migrate_env_source_preflights_collisions_before_writing(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    original = "GH_VAR_REGION=remote\nREGION=local\n"
+    env.write_text(original, encoding="utf-8")
+
+    with pytest.raises(StoreError, match="collides with target key REGION"):
+        migrate_env_source(env)
+    assert env.read_text(encoding="utf-8") == original
 
 
 def test_inspect_token_reads_scope_and_expiration_headers(monkeypatch) -> None:
@@ -362,6 +385,57 @@ def test_archive_type_transitions_remove_stale_payloads(monkeypatch, tmp_path: P
     archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
     assert show_environment(public, tmp_path, env)[1] == {"API_KEY": "public-two"}
     assert not any(event.startswith(("put:", "remove:")) for event in events)
+
+
+def test_migrate_environment_archive_partitions_and_removes_legacy(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: variable\nREGION=current\n# gh-vault: secret\nAPI_KEY=current\nLOCAL_ONLY=current\n", encoding="utf-8")
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+    base = "projects/github.com/owner/repo"
+    legacy = f"{base}/env.json"
+    vault.values[legacy] = '{"origin":"https://github.com/owner/repo.git","values":{"GH_SECRET_API_KEY":"synthetic-secret","GH_VAR_REGION":"eu-west-1","LOCAL_ONLY":"private-local"},"version":2}'
+    vault.values[f"{base}/env.example"] = "# template\n"
+
+    assert migrate_environment_archive(vault, public, tmp_path, env, tmp_path / ".env.example") == ArchiveMigrationResult("github.com/owner/repo", "default", 1, 1, 1)  # type: ignore[arg-type]
+    assert public.load_variables("github.com/owner/repo", "default", "https://github.com/owner/repo.git") == {"REGION": "eu-west-1"}
+    assert legacy not in vault.values
+    assert "synthetic-secret" not in "".join(path.read_text(encoding="utf-8") for path in public.root.rglob("*.json"))
+
+    vault.values[legacy] = '{"origin":"https://github.com/owner/repo.git","values":{"GH_SECRET_API_KEY":"synthetic-secret","GH_VAR_REGION":"eu-west-1","LOCAL_ONLY":"private-local"},"version":2}'
+    assert migrate_environment_archive(vault, public, tmp_path, env, tmp_path / ".env.example") == ArchiveMigrationResult("github.com/owner/repo", "default", 1, 1, 1)  # type: ignore[arg-type]
+    assert legacy not in vault.values
+
+    vault.values[legacy] = '{"origin":"https://github.com/owner/repo.git","values":{"GH_SECRET_API_KEY":"changed","GH_VAR_REGION":"eu-west-1","LOCAL_ONLY":"private-local"},"version":2}'
+    with pytest.raises(StoreError, match="already exists with different data"):
+        migrate_environment_archive(vault, public, tmp_path, env, tmp_path / ".env.example")  # type: ignore[arg-type]
+    assert legacy in vault.values
+
+
+def test_migrate_environment_archive_keeps_legacy_when_publication_fails(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    class FailingEnvironmentStore(EnvironmentStore):
+        def save_manifest(self, namespace, origin, environments):
+            raise StoreError("synthetic publication failure")
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: variable\nREGION=current\n", encoding="utf-8")
+    vault = MemoryVault()
+    legacy = "projects/github.com/owner/repo/env.json"
+    vault.values[legacy] = '{"origin":"https://github.com/owner/repo.git","values":{"GH_VAR_REGION":"eu-west-1"},"version":2}'
+
+    with pytest.raises(StoreError, match="synthetic publication failure"):
+        migrate_environment_archive(vault, FailingEnvironmentStore(tmp_path / "config"), tmp_path, env, tmp_path / ".env.example")  # type: ignore[arg-type]
+    assert legacy in vault.values
 
 
 def test_export_act_and_workflow_check(tmp_path: Path) -> None:

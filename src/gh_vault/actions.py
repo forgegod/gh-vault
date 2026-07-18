@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from .envfiles import DotenvAssignment, _write_private, format_dotenv_value, parse_typed_dotenv, project_namespace
+from .envfiles import DotenvAssignment, _parse_assignment, _write_private, example_file_for, format_dotenv_value, parse_typed_dotenv, project_namespace
 from .store import StoreError
 
 RESERVED = re.compile(r"^(?:GITHUB_.*|RUNNER_.*|CI|GH_TOKEN)$")
@@ -215,6 +215,86 @@ def run_act(env_file: Path, program: list[str], directory: Path) -> int:
         except OSError as exc:
             raise StoreError(f"cannot run act: {exc}") from exc
         return result.returncode
+
+
+def migrate_env_source(env_file: Path) -> tuple[int, int]:
+    example_file = example_file_for(env_file)
+    targets = [(env_file, False), *(([(example_file, True)] if example_file.exists() else []))]
+    rendered: list[tuple[Path, str, int]] = []
+    for path, include_commented in targets:
+        try:
+            source = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise StoreError(f"cannot read {path}: {exc}") from exc
+        content, count = _render_legacy_declarations(source, path, include_commented)
+        rendered.append((path, content, count))
+
+    temporary: list[tuple[Path, Path]] = []
+    try:
+        for path, content, count in rendered:
+            if not count:
+                continue
+            target = path.with_name(path.name + ".gh-vault.tmp")
+            _write_private(target, content)
+            parse_typed_dotenv(target, include_commented=path == example_file)
+            if target.read_text(encoding="utf-8") != content:
+                raise StoreError(f"cannot verify migrated environment file: {path}")
+            temporary.append((path, target))
+        for path, target in temporary:
+            os.replace(target, path)
+    finally:
+        for _, target in temporary:
+            if target.exists():
+                target.unlink()
+    return rendered[0][2], rendered[1][2] if len(rendered) > 1 else 0
+
+
+def _render_legacy_declarations(source: str, path: Path, include_commented: bool) -> tuple[str, int]:
+    lines = source.splitlines()
+    assignments: list[tuple[int, str, bool]] = []
+    occupied: set[str] = set()
+    pending: tuple[str, int] | None = None
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith("#") and stripped[1:].lstrip().startswith("gh-vault:"):
+            if pending is not None:
+                raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+            kind = stripped[1:].lstrip().removeprefix("gh-vault:").strip()
+            if kind not in {"secret", "variable"}:
+                raise StoreError(f"invalid gh-vault directive at {path}:{number}")
+            pending = (kind, number)
+            continue
+        parsed = _parse_assignment(line, path, number, include_commented=include_commented)
+        if pending is not None:
+            if parsed is None:
+                raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+            if parsed[0].startswith(("GH_VAR_", "GH_SECRET_")):
+                raise StoreError(f"legacy declaration conflicts with an existing directive at {path}:{number}")
+            pending = None
+        if parsed is None:
+            continue
+        key, _, commented = parsed
+        if key.startswith(("GH_VAR_", "GH_SECRET_")):
+            assignments.append((number - 1, key, commented))
+        else:
+            occupied.add(key)
+    if pending is not None:
+        raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+
+    migrated: set[str] = set()
+    for _, key, _ in assignments:
+        target = key.removeprefix("GH_VAR_").removeprefix("GH_SECRET_")
+        if target in occupied or target in migrated:
+            raise StoreError(f"legacy declaration collides with target key {target} in {path}")
+        migrated.add(target)
+    for index, key, commented in reversed(assignments):
+        kind = "variable" if key.startswith("GH_VAR_") else "secret"
+        target = key.removeprefix("GH_VAR_").removeprefix("GH_SECRET_")
+        line = lines[index]
+        prefix = line[: len(line) - len(line.lstrip())]
+        assignment = line.replace(key, target, 1)
+        lines[index : index + 1] = [f"{prefix}# gh-vault: {kind}", assignment]
+    return "\n".join(lines) + ("\n" if source.endswith("\n") else ""), len(assignments)
 
 
 def _finding(path: Path, line: int, severity: str, name: str, message: str) -> dict[str, str | int]:

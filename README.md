@@ -157,6 +157,18 @@ LOCAL_ONLY=local
 
 The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped.
 
+### Migrate legacy declarations and archives
+
+Migration is explicitly two-stage so classification is reviewed before any value enters clear-text storage:
+
+```sh
+gh-vault actions migrate-env --env-file .env
+# Review every generated secret/variable directive.
+gh-vault env migrate --env-file .env
+```
+
+`actions migrate-env` rewrites only `GH_SECRET_*` and `GH_VAR_*` assignments in the selected environment and matching template. It preserves comments and commented template assignments, leaves unprefixed values local-only, and refuses collisions or unsupported syntax before replacing either file. `env migrate` is the only command that reads the legacy encrypted archive. It partitions values by the reviewed directives, verifies the new public and encrypted payloads, excludes local-only values, and removes the legacy payload last. Run both commands separately for each `.env.<profile>`.
+
 ### Sync declared values to GitHub
 
 ```sh

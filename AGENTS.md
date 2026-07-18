@@ -89,21 +89,27 @@ Project-wide durable preferences (style, workflow, conventions) live in user mem
 - **Split vault backend.** Tokens, secret environment values, and eligible templates belong only in `pass` entries below `gh-vault/`. Explicit `# gh-vault: variable` values may use the restrictive XDG archive store; local and secret values must never enter it or metadata indexes.
 - **Intentional credential output boundary.** Token values must not reach stdout except for the exact `git-credential get` response Git requires.
 
-## Codebase exploration — mandatory graph-first workflow
+## Codebase Knowledge Graph (codebase-memory-mcp)
 
-For source-code discovery, tracing, debugging, review, or impact analysis,
-MUST use the `code-review-graph` MCP before `search_files`, `read_file`, grep,
-glob, find, or directory scans.
+This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.
+ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 
-1. Load the `code-review-graph` skill.
-2. Call `get_minimal_context_tool` first with the explicit `repo_root`.
-3. Use the recommended graph query to identify symbols, relationships, flows,
-   affected files, and tests.
-4. Only then use targeted file reads to verify exact implementation details.
+### Priority Order
+1. `search_graph` — find functions, classes, routes, variables by pattern
+2. `trace_path` — trace who calls a function or what it calls
+3. `get_code_snippet` — read specific function/class source code
+4. `query_graph` — run Cypher queries for complex patterns
+5. `get_architecture` — high-level project summary
 
-Do not silently bypass the graph. If unavailable or stale, retry with
-`repo_root`, build/update it when possible, and report the failure before
-falling back to targeted file tools.
+### When to fall back to grep/glob
+- Searching for string literals, error messages, config values
+- Searching non-code files (Dockerfiles, shell scripts, configs)
+- When MCP tools return insufficient results
+
+### Examples
+- Find a handler: `search_graph(name_pattern=".*OrderHandler.*")`
+- Who calls it: `trace_path(function_name="OrderHandler", direction="inbound")`
+- Read source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`
 
 ## Child DOX Index
 

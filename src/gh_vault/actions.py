@@ -212,9 +212,14 @@ def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) 
 
 
 def run_act(env_file: Path, program: list[str], directory: Path) -> int:
-    if not program or program[0] != "--" or len(program) < 2 or Path(program[1]).name != "act":
+    if not program or program[0] != "--":
         raise StoreError("run-act requires an act command after --")
-    command = program[1:]
+    if Path(program[1]).name == "act":
+        command = program[1:]
+    elif len(program) >= 2 and Path(program[1]).name == "gh" and len(program) >= 3 and Path(program[2]).name == "act":
+        command = program[1:]
+    else:
+        raise StoreError("run-act requires an act command after -- (use 'act' or 'gh act')")
     forbidden = ("--secret-file", "--var-file")
     if any(argument == flag or argument.startswith(flag + "=") for argument in command for flag in forbidden):
         raise StoreError("run-act manages --secret-file and --var-file; do not supply them manually")

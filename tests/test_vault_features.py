@@ -524,6 +524,53 @@ def test_run_act_rejects_managed_file_flags_before_creating_tempfiles(monkeypatc
         run_act(tmp_path / ".env", ["--", "act", flag], tmp_path)
 
 
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_run_act_accepts_gh_act_invocation(monkeypatch, tmp_path: Path, returncode: int) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret\nAPI_KEY=synthetic\n# gh-vault: variable\nREGION=eu-test-1\n", encoding="utf-8")
+    observed: dict[str, Path] = {}
+
+    class Result:
+        def __init__(self, code: int) -> None:
+            self.returncode = code
+
+    def fake_run(command, *, cwd, check):
+        assert command[:3] == ["gh", "act", "workflow_dispatch"]
+        assert command[-4] == "--secret-file"
+        assert command[-2] == "--var-file"
+        secrets_path = Path(command[-3])
+        variables_path = Path(command[-1])
+        observed["root"] = secrets_path.parent
+        assert cwd == tmp_path and check is False
+        assert stat.S_IMODE(secrets_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(secrets_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(variables_path.stat().st_mode) == 0o600
+        assert secrets_path.read_text(encoding="utf-8") == "API_KEY=synthetic\n"
+        assert variables_path.read_text(encoding="utf-8") == "REGION=eu-test-1\n"
+        return Result(returncode)
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert run_act(env, ["--", "gh", "act", "workflow_dispatch"], tmp_path) == returncode
+    assert not observed["root"].exists()
+
+
+@pytest.mark.parametrize("program", [["--", "gh"], ["--", "gh", "workflow_dispatch"], ["--", "/usr/local/bin/run-tests"]])
+def test_run_act_rejects_commands_other_than_act_or_gh_act(monkeypatch, tmp_path: Path, program: list[str]) -> None:
+    monkeypatch.setattr("gh_vault.actions.tempfile.TemporaryDirectory", lambda **kwargs: pytest.fail("temporary directory created"))
+
+    with pytest.raises(StoreError, match="use 'act' or 'gh act'"):
+        run_act(tmp_path / ".env", program, tmp_path)
+
+
+@pytest.mark.parametrize("flag", ["--secret-file", "--secret-file=custom", "--var-file", "--var-file=custom"])
+def test_run_act_rejects_managed_file_flags_when_invoked_through_gh_act(monkeypatch, tmp_path: Path, flag: str) -> None:
+    monkeypatch.setattr("gh_vault.actions.tempfile.TemporaryDirectory", lambda **kwargs: pytest.fail("temporary directory created"))
+
+    with pytest.raises(StoreError, match="do not supply them manually"):
+        run_act(tmp_path / ".env", ["--", "gh", "act", flag], tmp_path)
+
+
 def test_workflow_check_omits_defaulted_and_github_orphans(tmp_path: Path) -> None:
     workflow_dir = tmp_path / ".github" / "workflows"
     workflow_dir.mkdir(parents=True)

@@ -305,6 +305,8 @@ Reads repository variables via `gh variable list` and writes standard keys with 
 
 ```sh
 gh-vault run-act -- act workflow_dispatch
+# or, equivalently, when only the gh CLI is on PATH:
+gh-vault run-act -- gh act workflow_dispatch
 ```
 
 `run-act` creates separate secret and variable files in a mode-`0700` temporary directory, appends `--secret-file` and `--var-file` to the supplied `act` command, and removes the files after success or child failure. Both files always exist at mode `0600`, even when empty. Unmarked local values are excluded. Supplying either managed file flag manually is rejected. `SIGKILL` or a host crash can prevent normal cleanup.

@@ -12,7 +12,7 @@ Production package for storing named GitHub tokens and project environment archi
 | `__main__.py` | Module entry point delegating to the CLI. |
 | `cli.py` | Command dispatch for profiles, archives, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config persistence, `pass` integration, and backend errors. |
-| `envfiles.py` | Safe dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |
+| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, encrypted archive and reconstruction. |
 | `github.py` | GitHub token metadata inspection without exposing token values. |
 | `actions.py` | GitHub Actions value selection, remote-variable import, `gh` sync, `act` exports, and workflow references. |
 
@@ -29,6 +29,7 @@ Production package for storing named GitHub tokens and project environment archi
 - `git-credential get` responds only to HTTPS requests for `github.com`. `store` and `erase` are no-ops, and token output is limited to Git's exact credential response.
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.
 - Environment archives require `remote.origin.url`, support `.env` plus repeated `.env.<profile>` variants, list each archived variant with its template status, refuse to overwrite a selected environment without `--force`, and reconstruct comments from its matching `.env.example` variant.
+- Typed dotenv parsing recognizes only an adjacent `# gh-vault: secret` or `# gh-vault: variable` directive, rejects duplicate and legacy-prefixed declarations, and reads commented template assignments only when explicitly requested. Ordinary `parse_dotenv()` behavior remains directive-agnostic.
 - `env run -- <command> ...` execs a child with parsed local values plus declared `GH_VAR_*` and `GH_SECRET_*` values mapped to unprefixed names; the conservative dotenv parser decodes quotes and valid escapes without sourcing the file, and Secrets override Variables for the same name.
 - Actions sync accepts only `GH_SECRET_*` and `GH_VAR_*` values and sends them to `gh` on stdin. `--migrate-types` is the explicit destructive path: remove only a same-name opposite-type remote value, then set the declared type. `--prune` removes remote-only names but leaves names declared under either local prefix and is mutually exclusive with type migration.
 - `secrets check` verifies `GH_SECRET_*` and `GH_VAR_*` names in both `.env` and GitHub without modifying `.env`; the local prefix selects the required GitHub type, so opposite remote types are nonzero directional drift. Missing and remote-only values are nonzero. `workflow check` reports unknown workflow references only when they lack a fallback and are not GitHub-provided names; every finding is one located `file:line: severity: explanation` line. `variables import` reads repository variables with `gh variable list`, writes them as `GH_VAR_*` entries to `.env` or (when absent) `.env.example`, and replaces matching entries only with `--force`.

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, remote_secret_status, runtime_environment, sync
-from gh_vault.envfiles import archive_environment, list_environments, parse_dotenv, project_namespace, restore_environment
+from gh_vault.envfiles import DotenvAssignment, archive_environment, list_environments, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment
 from gh_vault.github import inspect_token
 from gh_vault.store import StoreError
 
@@ -87,6 +87,77 @@ def test_parse_dotenv_decodes_explicit_values_without_sourcing(tmp_path: Path) -
         "FILE": "from-file\n",
         "MULTILINE": "line1\nline2",
     }
+
+
+def test_parse_typed_dotenv_classifies_adjacent_directives(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# gh-vault: variable\nREGION=eu\n# gh-vault: secret\nexport API_KEY='synthetic'\nLOCAL_ONLY=local\n",
+        encoding="utf-8",
+    )
+
+    assert parse_typed_dotenv(env) == (
+        DotenvAssignment("REGION", "eu", "variable", 2, False),
+        DotenvAssignment("API_KEY", "synthetic", "secret", 4, False),
+        DotenvAssignment("LOCAL_ONLY", "local", "local", 5, False),
+    )
+    assert parse_dotenv(env) == {"REGION": "eu", "API_KEY": "synthetic", "LOCAL_ONLY": "local"}
+
+
+def test_parse_typed_dotenv_reads_commented_template_assignments(tmp_path: Path) -> None:
+    env = tmp_path / ".env.example"
+    env.write_text(
+        "# Free-form comment.\n# gh-vault: variable\n# REGION=eu\n# gh-vault: secret\n# API_KEY=\n# LOCAL_ONLY=local\n",
+        encoding="utf-8",
+    )
+
+    assert parse_typed_dotenv(env, include_commented=True) == (
+        DotenvAssignment("REGION", "eu", "variable", 3, True),
+        DotenvAssignment("API_KEY", "", "secret", 5, True),
+        DotenvAssignment("LOCAL_ONLY", "local", "local", 6, True),
+    )
+    assert parse_dotenv(env) == {}
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "# gh-vault: secret\n\nAPI_KEY=value\n",
+        "# gh-vault: secret\n# explanation\nAPI_KEY=value\n",
+        "# gh-vault: secret\n",
+    ],
+)
+def test_parse_typed_dotenv_requires_strict_directive_adjacency(tmp_path: Path, contents: str) -> None:
+    env = tmp_path / ".env"
+    env.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(StoreError, match="directive must be followed immediately by an assignment"):
+        parse_typed_dotenv(env)
+
+
+def test_parse_typed_dotenv_rejects_invalid_directive(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: public\nVALUE=synthetic\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="invalid gh-vault directive"):
+        parse_typed_dotenv(env)
+
+
+def test_parse_typed_dotenv_rejects_duplicate_keys(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("VALUE=first\n# gh-vault: secret\nVALUE=second\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="duplicate dotenv key VALUE"):
+        parse_typed_dotenv(env)
+
+
+@pytest.mark.parametrize("key", ["GH_VAR_REGION", "GH_SECRET_API_KEY"])
+def test_parse_typed_dotenv_rejects_legacy_prefixes(tmp_path: Path, key: str) -> None:
+    env = tmp_path / ".env"
+    env.write_text(f"{key}=synthetic\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="legacy GH_VAR_/GH_SECRET_ declaration"):
+        parse_typed_dotenv(env)
 
 
 def test_runtime_environment_injects_local_values_and_secret_precedence(tmp_path: Path) -> None:

@@ -4,14 +4,25 @@ import base64
 import json
 import re
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import Literal, TypedDict
 from urllib.parse import urlparse
 
 from .store import StoreError, VaultStore
 
 KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCP_URL = re.compile(r"^(?:[^@]+@)?(?P<host>[^:]+):(?P<path>.+)$")
+DotenvKind = Literal["secret", "variable", "local"]
+
+
+@dataclass(frozen=True)
+class DotenvAssignment:
+    key: str
+    value: str
+    kind: DotenvKind
+    line: int
+    commented: bool
 
 
 class EnvironmentManifest(TypedDict):
@@ -40,12 +51,8 @@ def project_namespace(directory: Path) -> tuple[str, str]:
 
 
 def parse_dotenv(path: Path) -> dict[str, str]:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise StoreError(f"cannot read {path}: {exc}") from exc
     values: dict[str, str] = {}
-    for number, line in enumerate(lines, 1):
+    for number, line in enumerate(_read_dotenv_lines(path), 1):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
@@ -56,6 +63,94 @@ def parse_dotenv(path: Path) -> dict[str, str]:
             raise StoreError(f"unsupported dotenv syntax at {path}:{number}")
         values[key.strip()] = _decode(raw.strip(), path.parent, path, number)
     return values
+
+
+def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[DotenvAssignment, ...]:
+    assignments: list[DotenvAssignment] = []
+    seen: set[str] = set()
+    pending: tuple[Literal["secret", "variable"], int] | None = None
+
+    for number, line in enumerate(_read_dotenv_lines(path), 1):
+        stripped = line.strip()
+        if pending is not None:
+            parsed = _parse_assignment(line, path, number, include_commented=include_commented)
+            if parsed is None:
+                raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+            key, value, commented = parsed
+            _append_typed_assignment(assignments, seen, key, value, pending[0], number, commented, path)
+            pending = None
+            continue
+
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            comment = stripped[1:].lstrip()
+            if comment.startswith("gh-vault:"):
+                kind = comment.removeprefix("gh-vault:").strip()
+                if kind == "secret" or kind == "variable":
+                    pending = (kind, number)
+                else:
+                    raise StoreError(f"invalid gh-vault directive at {path}:{number}")
+                continue
+            if not include_commented:
+                continue
+
+        parsed = _parse_assignment(line, path, number, include_commented=include_commented)
+        if parsed is None:
+            continue
+        key, value, commented = parsed
+        _append_typed_assignment(assignments, seen, key, value, "local", number, commented, path)
+
+    if pending is not None:
+        raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+    return tuple(assignments)
+
+
+def _read_dotenv_lines(path: Path) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise StoreError(f"cannot read {path}: {exc}") from exc
+
+
+def _parse_assignment(line: str, path: Path, number: int, *, include_commented: bool) -> tuple[str, str, bool] | None:
+    stripped = line.strip()
+    if not stripped:
+        return None
+    commented = stripped.startswith("#")
+    if commented:
+        if not include_commented:
+            return None
+        stripped = stripped[1:].lstrip()
+        if not stripped or "=" not in stripped:
+            return None
+    if stripped.startswith("export "):
+        stripped = stripped[7:].lstrip()
+    key, separator, raw = stripped.partition("=")
+    key = key.strip()
+    if not separator or not KEY.fullmatch(key):
+        if commented:
+            return None
+        raise StoreError(f"unsupported dotenv syntax at {path}:{number}")
+    return key, _decode(raw.strip(), path.parent, path, number), commented
+
+
+def _append_typed_assignment(
+    assignments: list[DotenvAssignment],
+    seen: set[str],
+    key: str,
+    value: str,
+    kind: DotenvKind,
+    number: int,
+    commented: bool,
+    path: Path,
+) -> None:
+    if key.startswith(("GH_VAR_", "GH_SECRET_")):
+        raise StoreError(f"legacy GH_VAR_/GH_SECRET_ declaration at {path}:{number}")
+    if key in seen:
+        raise StoreError(f"duplicate dotenv key {key} at {path}:{number}")
+    seen.add(key)
+    assignments.append(DotenvAssignment(key, value, kind, number, commented))
 
 
 def _decode(value: str, parent: Path, path: Path, number: int) -> str:

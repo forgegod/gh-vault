@@ -9,7 +9,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 | Item | Role |
 |---|---|
 | `test_cli.py` | Parser helpers, token metadata integration, profile listing, Git credential output filtering, and `run` / `env run` process-environment behavior using an in-memory store. |
-| `test_store.py` | Store lifecycle, restrictive permissions, replacement rules, token validation, missing-secret errors, and a temporary executable fake `pass` backend. |
+| `test_store.py` | Token and environment store lifecycle, restrictive permissions, payload/index isolation, replacement rules, validation, missing-secret errors, and a temporary executable fake `pass` backend. |
 | `test_vault_features.py` | Project-origin namespace normalization, ordinary and typed dotenv parsing, mocked GitHub token metadata, encrypted default and named environment archive/restore/list behavior, remote Actions type checks, `act` exports, and workflow-wiring checks. |
 
 ## Local Contracts
@@ -20,7 +20,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 - CLI process replacement is intercepted with `monkeypatch`; tests must not exec real child commands.
 - Environment and workflow tests use temporary files plus mocked Git/GitHub subprocess boundaries; they must not read a real `.env`, password store, or GitHub account.
 - Git credential tests cover allowed protocol/host combinations and assert the exact protocol response.
-- Permission checks target POSIX mode `0700` for the config directory and `0600` for `config.json`.
+- Permission checks target POSIX mode `0700` for config/environment directories and `0600` for metadata, payload, and index JSON files.
 
 ## Work Guidance
 

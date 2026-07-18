@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.store import Profile, StoreError, VaultStore
+from gh_vault.store import EnvironmentStore, Profile, StoreError, VaultStore
 
 
 @pytest.fixture
@@ -82,6 +82,87 @@ def test_config_permissions_are_restrictive(store: VaultStore) -> None:
     assert stat.S_IMODE(store.config_file.stat().st_mode) == 0o600
     config = json.loads(store.config_file.read_text(encoding="utf-8"))
     assert "github_pat_value" not in json.dumps(config)
+
+
+def test_environment_store_separates_variable_payload_and_manifest(tmp_path: Path) -> None:
+    config_dir = tmp_path / "config"
+    store = EnvironmentStore(config_dir)
+    namespace = "github.com/owner/repo"
+    origin = "git@github.com:owner/repo.git"
+    details = {"default": {"variables": True, "secrets": False, "example": False}}
+
+    store.save_variables(namespace, "default", origin, {"REGION": "eu-test-1"})
+    store.save_manifest(namespace, origin, details)
+
+    project_dir = config_dir / "environments" / "github.com" / "owner" / "repo"
+    payload_path = project_dir / "env.variables.json"
+    manifest_path = project_dir / "environments.json"
+    assert store.load_variables(namespace, "default", origin) == {"REGION": "eu-test-1"}
+    assert store.load_manifest(namespace, origin)["environments"] == details
+    assert json.loads(payload_path.read_text(encoding="utf-8")) == {
+        "origin": origin,
+        "values": {"REGION": "eu-test-1"},
+        "version": 1,
+    }
+    assert "eu-test-1" not in manifest_path.read_text(encoding="utf-8")
+    assert stat.S_IMODE(payload_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(manifest_path.stat().st_mode) == 0o600
+    for path in (config_dir, config_dir / "environments", config_dir / "environments" / "github.com", config_dir / "environments" / "github.com" / "owner", project_dir):
+        assert stat.S_IMODE(path.stat().st_mode) == 0o700
+
+
+def test_environment_store_validates_payload_origin_and_data(tmp_path: Path) -> None:
+    store = EnvironmentStore(tmp_path / "config")
+    namespace = "github.com/owner/repo"
+    origin = "git@github.com:owner/repo.git"
+    store.save_variables(namespace, "production", origin, {"REGION": "eu-test-1"})
+    payload_path = store.root / "github.com" / "owner" / "repo" / "env.production.variables.json"
+
+    with pytest.raises(StoreError, match="does not match this origin"):
+        store.load_variables(namespace, "production", "git@github.com:other/repo.git")
+
+    payload_path.write_text('{"version":1,"origin":"git@github.com:owner/repo.git","values":{"REGION":42}}', encoding="utf-8")
+    with pytest.raises(StoreError, match="invalid data"):
+        store.load_variables(namespace, "production", origin)
+
+    payload_path.write_text("not-json", encoding="utf-8")
+    with pytest.raises(StoreError, match="cannot read environment variable payload"):
+        store.load_variables(namespace, "production", origin)
+
+
+def test_environment_store_rejects_invalid_paths_and_manifest_details(tmp_path: Path) -> None:
+    store = EnvironmentStore(tmp_path / "config")
+    origin = "git@github.com:owner/repo.git"
+
+    with pytest.raises(StoreError, match="invalid environment namespace"):
+        store.save_variables("github.com/../repo", "default", origin, {})
+    with pytest.raises(StoreError, match="invalid environment profile"):
+        store.save_variables("github.com/owner/repo", "../production", origin, {})
+    with pytest.raises(StoreError, match="invalid environment origin"):
+        store.save_variables("github.com/owner/repo", "default", "", {})
+    with pytest.raises(StoreError, match="environment index has invalid data"):
+        store.save_manifest("github.com/owner/repo", origin, {"default": {"variables": True}})
+
+
+def test_environment_store_removes_only_the_selected_payload(tmp_path: Path) -> None:
+    store = EnvironmentStore(tmp_path / "config")
+    namespace = "github.com/owner/repo"
+    origin = "git@github.com:owner/repo.git"
+    store.save_variables(namespace, "default", origin, {"REGION": "default"})
+    store.save_variables(namespace, "production", origin, {"REGION": "production"})
+
+    store.remove_variables(namespace, "default")
+
+    assert store.load_variables(namespace, "default", origin) == {}
+    assert store.load_variables(namespace, "production", origin) == {"REGION": "production"}
+
+
+def test_environment_store_uses_the_xdg_config_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    store = EnvironmentStore()
+
+    assert store.root == tmp_path / "xdg" / "gh-vault" / "environments"
 
 
 def test_default_password_store_is_in_the_user_home(

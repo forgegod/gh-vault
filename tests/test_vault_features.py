@@ -8,12 +8,12 @@ import pytest
 from gh_vault.actions import ActionValue, RemoteValueStatus, SyncResult, action_values, check_workflows, export_act, import_variables, migrate_env_source, remote_secret_status, run_act, runtime_environment, sync
 from gh_vault.envfiles import ArchiveMigrationResult, DotenvAssignment, archive_environment, list_environments, migrate_environment_archive, parse_dotenv, parse_typed_dotenv, project_namespace, restore_environment, show_environment
 from gh_vault.github import inspect_token
-from gh_vault.store import EnvironmentStore, StoreError
+from gh_vault.store import EnvironmentStore, Profile, StoreError
 
 
 class MemoryVault:
-    def __init__(self) -> None:
-        self.values: dict[str, str] = {}
+    def __init__(self, profiles: dict[str, str] | None = None) -> None:
+        self.values: dict[str, str] = dict(profiles or {})
 
     def put_secret(self, name: str, value: str) -> None:
         self.values[name] = value
@@ -26,6 +26,12 @@ class MemoryVault:
 
     def remove_secret(self, name: str) -> None:
         self.values.pop(name, None)
+
+    def get(self, name: str) -> str:
+        return self.get_secret(name)
+
+    def profiles(self) -> list[Profile]:
+        return [Profile(name) for name in sorted(self.values)]
 
 
 def test_project_namespace_normalizes_ssh_origin(monkeypatch, tmp_path: Path) -> None:
@@ -167,7 +173,167 @@ def test_runtime_environment_injects_only_declared_actions_values(tmp_path: Path
         encoding="utf-8",
     )
 
-    assert runtime_environment(env) == {"REGION": "eu", "API_KEY": "synthetic"}
+    assert runtime_environment(env, MemoryVault()) == {"REGION": "eu", "API_KEY": "synthetic"}
+
+
+def test_parse_typed_dotenv_records_profile_reference(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\nLOCAL_ONLY=local\n",
+        encoding="utf-8",
+    )
+
+    assert parse_typed_dotenv(env) == (
+        DotenvAssignment("GITHUB_TOKEN", "", "secret", 2, False, "hermes-agent"),
+        DotenvAssignment("LOCAL_ONLY", "local", "local", 3, False, None),
+    )
+
+
+def test_parse_typed_dotenv_rejects_variable_profile_reference(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: variable hermes-agent\nGITHUB_TOKEN=\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="only valid for 'secret' directives"):
+        parse_typed_dotenv(env)
+
+
+def test_parse_typed_dotenv_rejects_invalid_profile_reference(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret -leading-dash\nTOKEN=\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="invalid gh-vault profile reference"):
+        parse_typed_dotenv(env)
+
+
+def test_parse_typed_dotenv_rejects_unknown_directive_token(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: public profile\nVALUE=synthetic\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="only valid for 'secret' directives"):
+        parse_typed_dotenv(env)
+
+
+def test_parse_typed_dotenv_rejects_variable_with_profile_token(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: variable eu-deploy\nREGION=\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="only valid for 'secret' directives"):
+        parse_typed_dotenv(env)
+
+
+def test_runtime_environment_resolves_profile_references(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\nLOCAL_ONLY=local\n# gh-vault: secret release-write\nDEPLOY_TOKEN=\n",
+        encoding="utf-8",
+    )
+    vault = MemoryVault({"hermes-agent": "synthetic-agent-token", "release-write": "synthetic-deploy-token"})
+
+    assert runtime_environment(env, vault) == {  # type: ignore[arg-type]
+        "GITHUB_TOKEN": "synthetic-agent-token",
+        "DEPLOY_TOKEN": "synthetic-deploy-token",
+    }
+
+
+def test_runtime_environment_rejects_unknown_profile(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret ghost\nTOKEN=\n", encoding="utf-8")
+    vault = MemoryVault({"other": "value"})
+
+    with pytest.raises(StoreError, match="is not configured"):
+        runtime_environment(env, vault)  # type: ignore[arg-type]
+
+
+def test_action_values_resolves_profile_references(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\n# gh-vault: secret\nAPI_KEY=synthetic\n# gh-vault: variable\nREGION=eu\n",
+        encoding="utf-8",
+    )
+    vault = MemoryVault({"hermes-agent": "synthetic-agent-token"})
+
+    entries = action_values(env, vault)  # type: ignore[arg-type]
+    by_name = {entry.name: entry for entry in entries}
+    assert by_name["GITHUB_TOKEN"].kind == "secret"
+    assert by_name["GITHUB_TOKEN"].value == "synthetic-agent-token"
+    assert by_name["API_KEY"].value == "synthetic"
+    assert by_name["REGION"].value == "eu"
+    assert [entry.line for entry in entries] == [2, 4, 6]
+
+
+def test_secret_sync_resolves_profile_references(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\n", encoding="utf-8")
+    vault = MemoryVault({"hermes-agent": "synthetic-agent-token"})
+    entries = action_values(env, vault)  # type: ignore[arg-type]
+
+    assert [entry.name for entry in entries] == ["GITHUB_TOKEN"]
+    assert [entry.value for entry in entries] == ["synthetic-agent-token"]
+    assert all(entry.kind == "secret" for entry in entries)
+
+
+def test_action_values_without_store_rejects_profile_reference(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\n", encoding="utf-8")
+
+    with pytest.raises(StoreError, match="requires a vault store"):
+        action_values(env)
+
+
+def test_archive_environment_rejects_profile_references(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    env.write_text("# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\n", encoding="utf-8")
+    example = tmp_path / ".env.example"
+    vault = MemoryVault()
+    public = EnvironmentStore(tmp_path / "config")
+
+    with pytest.raises(StoreError, match="references vault profile 'hermes-agent'"):
+        archive_environment(vault, public, tmp_path, env, example)  # type: ignore[arg-type]
+
+
+def test_export_act_resolves_profile_referenced_secrets(tmp_path: Path) -> None:
+    env = tmp_path / ".env"
+    env.write_text(
+        "# gh-vault: secret hermes-agent\nGITHUB_TOKEN=\n# gh-vault: variable\nREGION=eu\n# gh-vault: secret\nAPI_KEY=synthetic\n",
+        encoding="utf-8",
+    )
+    vault = MemoryVault({"hermes-agent": "synthetic-agent-token"})
+    secrets_path = tmp_path / ".secrets"
+    variables_path = tmp_path / ".vars"
+
+    entries = action_values(env, vault)  # type: ignore[arg-type]
+    secrets, variables = export_act(entries, secrets_path, variables_path)
+
+    assert (secrets, variables) == (2, 1)
+    assert secrets_path.read_text(encoding="utf-8") == "GITHUB_TOKEN=synthetic-agent-token\nAPI_KEY=synthetic\n"
+    assert variables_path.read_text(encoding="utf-8") == "REGION=eu\n"
+
+
+def test_restore_environment_preserves_profile_reference_directive(monkeypatch, tmp_path: Path) -> None:
+    class Result:
+        returncode = 0
+        stdout = "https://github.com/owner/repo.git\n"
+
+    monkeypatch.setattr("gh_vault.envfiles.subprocess.run", lambda *args, **kwargs: Result())
+    env = tmp_path / ".env"
+    example = tmp_path / ".env.example"
+    example.write_text("# gh-vault: secret hermes-agent\n# GITHUB_TOKEN=\n# gh-vault: variable\n# REGION=\n", encoding="utf-8")
+    vault = MemoryVault({"hermes-agent": "synthetic-agent-token"})
+    public = EnvironmentStore(tmp_path / "config")
+    public.save_variables("github.com/owner/repo", "default", "https://github.com/owner/repo.git", {"REGION": "eu-test-1"})
+    public.save_manifest("github.com/owner/repo", "https://github.com/owner/repo.git", {"default": {"variables": True, "secrets": False, "example": False}})
+
+    restore_environment(vault, public, tmp_path, env, example, False, False)  # type: ignore[arg-type]
+    rendered = env.read_text(encoding="utf-8")
+    assert "# gh-vault: secret hermes-agent" in rendered
+    assert "GITHUB_TOKEN=" in rendered
+    assert "synthetic-agent-token" not in rendered
+    assert "REGION=eu-test-1" in rendered
 
 
 def test_parse_dotenv_rejects_shell_syntax(tmp_path: Path) -> None:
@@ -544,7 +710,7 @@ def test_migrate_environment_archive_keeps_legacy_when_publication_fails(monkeyp
 def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     env = tmp_path / ".env"
     env.write_text("# gh-vault: secret\nAPI_KEY=alpha\n# gh-vault: variable\nREGION=eu\nLOCAL_ONLY=local\n", encoding="utf-8")
-    entries = action_values(env)
+    entries = action_values(env, MemoryVault())
     assert entries == [ActionValue("API_KEY", "secret", "alpha"), ActionValue("REGION", "variable", "eu")]
     assert [entry.line for entry in entries] == [2, 4]
     secrets, variables = export_act(entries, tmp_path / ".secrets", tmp_path / ".vars")

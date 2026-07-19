@@ -231,7 +231,7 @@ def test_env_run_injects_declared_actions_values(monkeypatch: pytest.MonkeyPatch
     args = cli.build_parser().parse_args(["env", "run", "--", "program", "argument"])
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(cli, "runtime_environment", lambda path: {"REGION": "eu", "TOKEN": "secret-token"})
+    monkeypatch.setattr(cli, "runtime_environment", lambda path, store: {"REGION": "eu", "TOKEN": "secret-token"})
     monkeypatch.setattr(cli.os, "execvpe", lambda program, arguments, environment: captured.update(program=program, arguments=arguments, environment=environment))
 
     assert cli.dispatch(args, MemoryStore()) == 127  # type: ignore[arg-type]
@@ -344,7 +344,7 @@ def test_secret_sync_dispatches_only_secret_entries(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         cli,
         "action_values",
-        lambda path: [
+        lambda path, store: [
             ActionValue("API_KEY", "secret", "alpha"),
             ActionValue("REGION", "variable", "eu"),
         ],
@@ -377,7 +377,7 @@ def test_variable_sync_dispatches_only_variable_entries(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         cli,
         "action_values",
-        lambda path: [
+        lambda path, store: [
             ActionValue("API_KEY", "secret", "alpha"),
             ActionValue("REGION", "variable", "eu"),
         ],
@@ -398,7 +398,7 @@ def test_variable_sync_dispatches_only_variable_entries(monkeypatch: pytest.Monk
 
 def test_secret_sync_summary_uses_secret_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secret", "sync"])
-    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "alpha")])
+    monkeypatch.setattr(cli, "action_values", lambda path, store: [ActionValue("API_KEY", "secret", "alpha")])
     monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
@@ -409,7 +409,7 @@ def test_secret_sync_summary_uses_secret_singular(monkeypatch: pytest.MonkeyPatc
 
 def test_variable_sync_summary_uses_variable_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["variable", "sync"])
-    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("REGION", "variable", "eu")])
+    monkeypatch.setattr(cli, "action_values", lambda path, store: [ActionValue("REGION", "variable", "eu")])
     monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
@@ -420,7 +420,7 @@ def test_variable_sync_summary_uses_variable_singular(monkeypatch: pytest.Monkey
 
 def test_secret_sync_dry_run_summary_uses_secret_singular(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["secret", "sync", "--dry-run"])
-    monkeypatch.setattr(cli, "action_values", lambda path: [ActionValue("API_KEY", "secret", "alpha")])
+    monkeypatch.setattr(cli, "action_values", lambda path, store: [ActionValue("API_KEY", "secret", "alpha")])
     monkeypatch.setattr(cli, "sync", lambda *args, **kwargs: SyncResult(1, 0))
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
@@ -431,7 +431,7 @@ def test_secret_sync_dry_run_summary_uses_secret_singular(monkeypatch: pytest.Mo
 
 def test_workflow_check_prints_located_diagnostics(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     args = cli.build_parser().parse_args(["workflow", "check"])
-    monkeypatch.setattr(cli, "action_values", lambda path: [])
+    monkeypatch.setattr(cli, "action_values", lambda path, store: [])
     monkeypatch.setattr(
         cli,
         "check_workflows",

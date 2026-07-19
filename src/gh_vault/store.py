@@ -12,7 +12,7 @@ from typing import Any
 STORE_PREFIX = "gh-vault"
 ENVIRONMENT_INDEX_VERSION = 1
 VARIABLE_PAYLOAD_VERSION = 1
-PROFILE_NAME = re.compile(r"^(?:default|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$")
+PROFILE_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
 NAMESPACE_PART = re.compile(r"^[A-Za-z0-9._-]+$")
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from .store import EnvironmentStore, StoreError, VaultStore
+from .store import EnvironmentStore, PROFILE_NAME, StoreError, VaultStore
 
 KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCP_URL = re.compile(r"^(?:[^@]+@)?(?P<host>[^:]+):(?P<path>.+)$")
@@ -23,6 +23,7 @@ class DotenvAssignment:
     kind: DotenvKind
     line: int
     commented: bool
+    profile: str | None = None
 
 
 @dataclass(frozen=True)
@@ -71,16 +72,16 @@ def parse_dotenv(path: Path) -> dict[str, str]:
 def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[DotenvAssignment, ...]:
     assignments: list[DotenvAssignment] = []
     seen: set[str] = set()
-    pending: tuple[Literal["secret", "variable"], int] | None = None
+    pending: tuple[Literal["secret", "variable"], str | None, int] | None = None
 
     for number, line in enumerate(_read_dotenv_lines(path), 1):
         stripped = line.strip()
         if pending is not None:
             parsed = _parse_assignment(line, path, number, include_commented=include_commented)
             if parsed is None:
-                raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+                raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[2]}")
             key, value, commented = parsed
-            _append_typed_assignment(assignments, seen, key, value, pending[0], number, commented, path)
+            _append_typed_assignment(assignments, seen, key, value, pending[0], number, commented, path, pending[1])
             pending = None
             continue
 
@@ -89,11 +90,8 @@ def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[
         if stripped.startswith("#"):
             comment = stripped[1:].lstrip()
             if comment.startswith("gh-vault:"):
-                kind = comment.removeprefix("gh-vault:").strip()
-                if kind == "secret" or kind == "variable":
-                    pending = (kind, number)
-                else:
-                    raise StoreError(f"invalid gh-vault directive at {path}:{number}")
+                kind, profile = _split_directive(comment, path, number)
+                pending = (kind, profile, number)
                 continue
             if not include_commented:
                 continue
@@ -102,11 +100,29 @@ def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[
         if parsed is None:
             continue
         key, value, commented = parsed
-        _append_typed_assignment(assignments, seen, key, value, "local", number, commented, path)
+        _append_typed_assignment(assignments, seen, key, value, "local", number, commented, path, None)
 
     if pending is not None:
-        raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[1]}")
+        raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[2]}")
     return tuple(assignments)
+
+
+def _split_directive(comment: str, path: Path, number: int) -> tuple[Literal["secret", "variable"], str | None]:
+    body = comment.removeprefix("gh-vault:").strip()
+    if not body:
+        raise StoreError(f"invalid gh-vault directive at {path}:{number}")
+    head, sep, tail = body.partition(" ")
+    if not sep:
+        if head in ("secret", "variable"):
+            return head, None
+        raise StoreError(f"invalid gh-vault directive at {path}:{number}")
+    kind = head
+    if kind != "secret":
+        raise StoreError(f"gh-vault profile references are only valid for 'secret' directives at {path}:{number}")
+    profile = tail.strip()
+    if not profile or not PROFILE_NAME.fullmatch(profile):
+        raise StoreError(f"invalid gh-vault profile reference at {path}:{number}")
+    return kind, profile
 
 
 def _read_dotenv_lines(path: Path) -> list[str]:
@@ -147,13 +163,14 @@ def _append_typed_assignment(
     number: int,
     commented: bool,
     path: Path,
+    profile: str | None,
 ) -> None:
     if key.startswith(("GH_VAR_", "GH_SECRET_")):
         raise StoreError(f"legacy GH_VAR_/GH_SECRET_ declaration at {path}:{number}")
     if key in seen:
         raise StoreError(f"duplicate dotenv key {key} at {path}:{number}")
     seen.add(key)
-    assignments.append(DotenvAssignment(key, value, kind, number, commented))
+    assignments.append(DotenvAssignment(key, value, kind, number, commented, profile))
 
 
 def _decode(value: str, parent: Path, path: Path, number: int) -> str:
@@ -198,6 +215,7 @@ def format_dotenv_value(value: str) -> str:
 def archive_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> str:
     namespace, origin = project_namespace(directory)
     assignments = parse_typed_dotenv(env_file)
+    _reject_profile_assignments(assignments, env_file)
     variables = {entry.key: entry.value for entry in assignments if entry.kind == "variable"}
     secrets = {entry.key: entry.value for entry in assignments if entry.kind == "secret"}
     base = f"projects/{namespace}"
@@ -244,6 +262,15 @@ def archive_environment(store: VaultStore, environment_store: EnvironmentStore, 
     return namespace
 
 
+def _reject_profile_assignments(assignments: tuple[DotenvAssignment, ...], env_file: Path) -> None:
+    for entry in assignments:
+        if entry.profile is not None:
+            raise StoreError(
+                f"{entry.key} at {env_file}:{entry.line} references vault profile '{entry.profile}'; "
+                f"profile references are resolved at runtime and cannot be archived"
+            )
+
+
 def migrate_environment_archive(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> ArchiveMigrationResult:
     namespace, origin = project_namespace(directory)
     profile = environment_profile(env_file)
@@ -252,6 +279,7 @@ def migrate_environment_archive(store: VaultStore, environment_store: Environmen
     if not declaration_file.exists():
         raise StoreError(f"archive migration requires {env_file} or {example_file}")
     declarations = parse_typed_dotenv(declaration_file, include_commented=declaration_file == example_file)
+    _reject_profile_assignments(declarations, declaration_file)
     kinds = {entry.key: entry.kind for entry in declarations if entry.kind != "local"}
     legacy_entry = _environment_entry(base, profile, "json")
     try:

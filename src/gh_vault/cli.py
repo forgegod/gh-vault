@@ -172,12 +172,12 @@ def _run(store: VaultStore, name: str | None, program: list[str]) -> int:
     return 127
 
 
-def _env_run(env_file: Path, program: list[str]) -> int:
+def _env_run(store: VaultStore, env_file: Path, program: list[str]) -> int:
     if not program or program[0] != "--": raise StoreError("env run requires a command after --")
     program = program[1:]
     if not program: raise StoreError("env run requires a command after --")
     environment = os.environ.copy()
-    environment.update(runtime_environment(env_file))
+    environment.update(runtime_environment(env_file, store))
     try: os.execvpe(program[0], program, environment)
     except FileNotFoundError as exc: raise StoreError(f"command not found: {program[0]}") from exc
     return 127
@@ -222,8 +222,8 @@ def _render_variable_check(env_file: Path, repo: str) -> int:
     return 0
 
 
-def _run_sync(args: argparse.Namespace, kind: Literal["secret", "variable"], directory: Path) -> int:
-    entries = [entry for entry in action_values(args.env_file) if entry.kind == kind]
+def _run_sync(store: VaultStore, args: argparse.Namespace, kind: Literal["secret", "variable"], directory: Path) -> int:
+    entries = [entry for entry in action_values(args.env_file, store) if entry.kind == kind]
     result = sync(entries, args.repo or default_repo(directory), kind, args.dry_run, args.migrate_types, args.prune)
     verb = "Would sync" if args.dry_run else "Synced"
     prune_phrase = f"; {'would prune' if args.dry_run else 'pruned'} {result.pruned} {kind}(s)" if args.prune else ""
@@ -277,25 +277,25 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         elif args.env_command == "migrate":
             result = migrate_environment_archive(store, environment_store, directory, args.env_file, example_file_for(args.env_file))
             print(f"Migrated {args.env_file.name} ({result.profile}) for {result.namespace}: {result.variables} variable value(s) moved to clear text, {result.secrets} secret value(s) retained encrypted, {result.local} local-only value(s) removed from gh-vault.")
-        else: return _env_run(args.env_file, args.program)
+        else: return _env_run(store, args.env_file, args.program)
         return 0
     if args.command == "secret":
         if args.secret_command == "check":
             return _render_secret_check(args.env_file, args.repo or default_repo(directory))
         if args.secret_command == "sync":
-            return _run_sync(args, "secret", directory)
-        entries = action_values(args.env_file)
+            return _run_sync(store, args, "secret", directory)
+        entries = action_values(args.env_file, store)
         secret_count, var_count = export_act(entries, args.output, args.var_output); print(f"Wrote {secret_count} secret(s) and {var_count} variable(s).")
         return 0
     if args.command == "variable":
         if args.variable_command == "check":
             return _render_variable_check(args.env_file, args.repo or default_repo(directory))
         if args.variable_command == "sync":
-            return _run_sync(args, "variable", directory)
+            return _run_sync(store, args, "variable", directory)
         target, count = import_variables(directory, args.repo or default_repo(directory), args.force)
         print(f"Imported {count} variable(s) into {target}.")
         return 0
-    entries = action_values(args.env_file)
+    entries = action_values(args.env_file, store)
     result = check_workflows(directory, entries)
     if args.json: print(json_result(result))
     else:

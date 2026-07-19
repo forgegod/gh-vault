@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from .envfiles import DotenvAssignment, _parse_assignment, _write_private, example_file_for, format_dotenv_value, parse_typed_dotenv, project_namespace
-from .store import StoreError
+from .store import StoreError, VaultStore
 
 RESERVED = re.compile(r"^(?:GITHUB_.*|RUNNER_.*|CI|GH_TOKEN)$")
 REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
@@ -44,20 +44,43 @@ class SyncResult:
     pruned: int
 
 
-def action_values(env_file: Path) -> list[ActionValue]:
-    return [
-        ActionValue(entry.key, entry.kind, entry.value, env_file, entry.line)
-        for entry in parse_typed_dotenv(env_file)
-        if entry.kind != "local" and entry.value and not RESERVED.fullmatch(entry.key)
-    ]
+def action_values(env_file: Path, store: VaultStore | None = None) -> list[ActionValue]:
+    assignments = parse_typed_dotenv(env_file)
+    configured = {profile.name for profile in store.profiles()} if store is not None else set()
+    entries: list[ActionValue] = []
+    for entry in assignments:
+        if entry.kind == "local":
+            continue
+        if entry.profile is not None:
+            if store is None:
+                raise StoreError(f"vault profile '{entry.profile}' referenced at {env_file}:{entry.line} requires a vault store")
+            if entry.profile not in configured:
+                raise StoreError(f"vault profile '{entry.profile}' referenced at {env_file}:{entry.line} is not configured")
+            entries.append(ActionValue(entry.key, entry.kind, store.get(entry.profile), env_file, entry.line))
+            continue
+        if RESERVED.fullmatch(entry.key):
+            continue
+        if entry.value:
+            entries.append(ActionValue(entry.key, entry.kind, entry.value, env_file, entry.line))
+    return entries
 
 
-def runtime_environment(env_file: Path) -> dict[str, str]:
-    return {
-        entry.key: entry.value
-        for entry in parse_typed_dotenv(env_file)
-        if entry.kind != "local" and not RESERVED.fullmatch(entry.key)
-    }
+def runtime_environment(env_file: Path, store: VaultStore) -> dict[str, str]:
+    environment: dict[str, str] = {}
+    configured = {profile.name for profile in store.profiles()}
+    for entry in parse_typed_dotenv(env_file):
+        if entry.kind == "local":
+            continue
+        if entry.profile is not None:
+            if entry.profile not in configured:
+                raise StoreError(f"vault profile '{entry.profile}' referenced at {env_file}:{entry.line} is not configured")
+            environment[entry.key] = store.get(entry.profile)
+            continue
+        if RESERVED.fullmatch(entry.key):
+            continue
+        if entry.value:
+            environment[entry.key] = entry.value
+    return environment
 
 
 def _remote_names(kind: str, repo: str) -> set[str]:

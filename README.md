@@ -224,10 +224,21 @@ REGION=eu-west-1
 # gh-vault: secret
 API_KEY=synthetic-value
 
+# gh-vault: secret hermes-agent
+GITHUB_TOKEN=
+
 LOCAL_ONLY=local
 ```
 
-The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped.
+The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped — except for profile-referenced secrets, which intentionally override the reserved guard so `GITHUB_TOKEN` can be resolved from a stored profile.
+
+The `# gh-vault: secret <profile>` shape references a token stored in `pass` under `gh-vault/<profile>`. The value on the next line is irrelevant — leave it empty. Resolution happens at three points:
+
+- `gh-vault env run` injects the resolved token into the child process environment under the assignment key.
+- `gh-vault secret sync` (and `secret export-act`, `run-act`) resolve the token and push/write it; `secret sync --migrate-types` and `--prune` apply the same way as for literal secrets.
+- `gh-vault workflow check` treats profile-referenced entries as declared local secrets, so they are not flagged as orphans.
+
+`gh-vault env archive` and `gh-vault env migrate` refuse profile-referenced declarations — their values are not real secrets, so archiving a placeholder literal would be wrong. Profile references are valid for `secret` only; `# gh-vault: variable <profile>` is rejected because vault profiles hold GitHub tokens, not variables.
 
 The directive is gh-vault's opt-in declaration for archive storage, GitHub synchronization, and workflow validation. GitHub may contain manually managed Secrets or Variables, but gh-vault does not treat them as managed workflow values without the matching local directive.
 
@@ -376,6 +387,7 @@ Excludes GitHub-provided names like `GITHUB_TOKEN`. Exits nonzero if any errors 
 | `KEY=@base64:data` | Base64-decodes the data |
 | `# gh-vault: secret` | Marks the immediately following assignment as a GitHub Secret |
 | `# gh-vault: variable` | Marks the immediately following assignment as a GitHub Variable |
+| `# gh-vault: secret <profile>` | Resolves the assignment to the token stored under `gh-vault/<profile>` in `pass`; the literal value is ignored |
 | `# comment` | Comment line, ignored |
 | `value # trailing` | Inline comment stripped (space before `#` required) |
 

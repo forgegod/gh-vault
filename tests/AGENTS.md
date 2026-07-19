@@ -25,6 +25,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 ## Work Guidance
 
 - Add regression coverage at the public behavior boundary that changed; use private helpers only when they are the boundary under test.
+- Profile-reference directive coverage lives in `test_vault_features.py` alongside the typed-dotenv tests; `MemoryVault` exposes `get` and `profiles` to satisfy the `VaultStore` duck-type used by `action_values` and `runtime_environment`.
 - Keep tests offline and independent of installed `pass`, GPG keys, `gh`, and GitHub access.
 - Preserve explicit synthetic token values so leakage into output or metadata is detectable.
 - Extend the fake backend only for behavior required by `TokenStore`; do not turn it into a general password-store emulator.

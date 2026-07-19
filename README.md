@@ -1,5 +1,8 @@
 # gh-vault
 
+[![GitHub](https://img.shields.io/badge/GitHub-forgegod%2Fgh--vault-181717?logo=github)](https://github.com/forgegod/gh-vault)
+[![PyPI](https://img.shields.io/pypi/v/forgegod-gh-vault?logo=pypi&label=PyPI)](https://pypi.org/project/forgegod-gh-vault/)
+
 ![gh-vault](assets/logo-1024.png)
 
 `gh-vault` keeps named GitHub tokens and secret project values in GPG-encrypted `pass` entries while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, and checks workflow wiring. Secret values never enter public metadata or ordinary command output.

@@ -26,6 +26,7 @@ Production package for storing named GitHub tokens and project environment archi
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
 - `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; every directory is mode `0700`, every JSON file is mode `0600`, and payload/index schemas remain separate and origin-bound.
 - The first set profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
+- `output [--name PROFILE]` intentionally prints only the selected token plus one trailing newline so callers can pipe it to a credential consumer such as `docker login --password-stdin`; it emits no labels or metadata.
 - `run` sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the exec'd child environment and does not mutate the invoking shell.
 - `git-credential get` responds only to HTTPS requests for `github.com`. `store` and `erase` are no-ops, and token output is limited to Git's exact credential response.
 - Backend and config failures raise `StoreError`; the CLI converts them into argparse errors without exposing token values.
@@ -41,7 +42,7 @@ Production package for storing named GitHub tokens and project environment archi
 
 ## Work Guidance
 
-- Keep token values out of command arguments, config files, logs, ordinary stdout, and exception text.
+- Keep token values out of command arguments, config files, logs, and exception text. Standard output is permitted only for the intentional `output` command and Git's exact credential-helper response.
 - Preserve the explicit `pass` dependency; do not add plaintext storage or silently choose another profile.
 - Keep the default password store and metadata paths in the user's home environment, outside the source checkout.
 - When changing a command, update parser wiring, dispatch behavior, tests, and the matching README usage/security text.

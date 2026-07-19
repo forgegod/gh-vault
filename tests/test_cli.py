@@ -58,6 +58,7 @@ def test_add_command_is_removed() -> None:
         (["list", "--help"], "Display stored token profiles"),
         (["activate", "--help"], "Select the token profile"),
         (["status", "--help"], "Show the profile selected"),
+        (["output", "--help"], "Print only the selected token"),
         (["remove", "--help"], "Delete a token profile"),
         (["run", "--help"], "Run a child command"),
         (["run-act", "--help"], "Run act with temporary 0600 secret and variable files"),
@@ -506,6 +507,13 @@ def test_list_marks_active_profile(capsys: pytest.CaptureFixture[str]) -> None:
     assert "scopes=contents:read" in output
     assert "expires=2026-12-31 23:59:59 UTC" in output
     assert "token-read" not in output
+
+
+def test_output_prints_only_selected_token(capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["output", "--name", "write"])
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "token-write\n"
 
 
 def test_git_credential_returns_selected_token_only_for_github(

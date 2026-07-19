@@ -128,13 +128,22 @@ gh-vault run --name production -- gh repo clone owner/repo
 
 Sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the exec'd child environment. The invoking shell is not mutated.
 
+### Pipe a token to standard input
+
+```sh
+gh-vault output | docker login ghcr.io --username USERNAME --password-stdin
+gh-vault output --name production | docker login ghcr.io --username USERNAME --password-stdin
+```
+
+`output` intentionally prints only the selected token plus a trailing newline. This is the credential-output boundary for tools that accept secrets on standard input; do not use it where stdout is logged. GitHub Container Registry requires a classic personal access token with the necessary package scopes (`read:packages` to pull and `write:packages` to push).
+
 ### Git credential helper
 
 ```sh
 git config credential.https://github.com.helper '!gh-vault git-credential'
 ```
 
-Responds only to HTTPS requests for `github.com`. The `get` operation outputs the standard credential-helper protocol response (`username=x-access-token` + the token as `password`). `store` and `erase` are no-ops. No other token stdout exists.
+Responds only to HTTPS requests for `github.com`. The `get` operation outputs the standard credential-helper protocol response (`username=x-access-token` + the token as `password`). `store` and `erase` are no-ops. Outside this protocol, only the explicit `output` command writes a token to stdout.
 
 To switch from `gh auth git-credential`:
 

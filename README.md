@@ -20,10 +20,12 @@ pass init YOUR_GPG_KEY_ID
 Install `gh-vault` from PyPI:
 
 ```sh
-uv tool install gh-vault
+uv tool install forgegod-gh-vault
 ```
 
 This installs the released version into the active uv tool environment and provides the `gh-vault` console script on your `PATH`.
+
+Releases are tag-driven via GitHub Actions trusted publishing. The full setup checklist, environment rules, and tag conventions live in [`docs/RELEASING.md`](docs/RELEASING.md). In short: bump `gh_vault.__version__`, commit, push a `v<version>` tag — nothing else publishes.
 
 ## Development installation
 
@@ -52,7 +54,7 @@ Builds a regular install from this checkout and copies the package into `~/.loca
 | Developing or debugging `gh-vault` | Live edit (`--editable .`) |
 | Trying the current checkout as a release-like build | Snapshot (`--force --from . gh-vault`) |
 | Switching back to live edits after a snapshot install | `uv tool install --editable .` (overwrites the snapshot) |
-| Returning to the released version after any checkout install | `uv tool install --force gh-vault` |
+| Returning to the released version after any checkout install | `uv tool install --force forgegod-gh-vault` |
 
 The `--force` flag in snapshot mode only matters when `gh-vault` is already installed in that tool venv — it forces overwrite instead of skipping. Omit it on a clean install.
 

@@ -1,45 +1,72 @@
-# Releasing to PyPI
+# Release workflow
 
-`gh-vault` uses a single source of truth for its version: `src/gh_vault/__init__.py` → `__version__`. The release workflow is: bump that string, tag, build, upload.
+PyPI publishing is fully automated via GitHub Actions trusted publishing
+(OIDC). Commits and PRs never publish; only version tags do.
 
-## Prerequisites
+## One-time setup
 
-A PyPI account and an API token scoped to the `gh-vault` project (or account-wide). Configure the token once:
+1. Add a pending trusted publisher on https://pypi.org/manage/account/publishing/
+   (and the same on https://test.pypi.org/ if you want a dry-run target):
 
-```sh
-# Re-authenticate at any time; this overwrites the stored token.
-uv publish --token PYPI_API_TOKEN    # placeholder; set the env var instead
+   - Owner: `forgegod`
+   - Repository: `gh-vault`
+   - Workflow filename: `publish.yml`
+   - Environment name: `pypi`
+
+   The PyPI project name must match the wheel's `Name:` field — that comes
+   from `pyproject.toml`'s `[project] name`, currently `forgegod-gh-vault`.
+   Create the PyPI project with that exact name (PyPI will accept the first
+   trusted-publisher upload as the project's initial release if no project of
+   that name exists yet).
+
+2. In the GitHub repo: Settings → Environments → New environment named `pypi`.
+   Under "Deployment branches" add a rule restricting deployments to the tag
+   pattern `v*`. This is the gate that keeps non-tag pushes from publishing.
+
+## Cutting a release
+
+1. Bump `gh_vault.__version__` in `src/gh_vault/__init__.py`.
+2. Commit on `main`.
+3. Tag with the exact same version, prefixed `v`, and push the tag:
+
+   ```bash
+   git tag -s v0.1.0 -m "release 0.1.0"
+   git push origin v0.1.0
+   ```
+
+   The tag push triggers `.github/workflows/publish.yml`, which:
+
+   - asserts the tag (stripped of `v`) equals `gh_vault.__version__` and fails
+     the build if they drift,
+   - builds sdist + wheel,
+   - publishes to PyPI via trusted publishing.
+
+4. Draft a GitHub release from the tag so the changelog URL in `pyproject.toml`
+   is useful.
+
+## What does NOT publish
+
+- Any push to a branch, including `main`.
+- Any pull request.
+- A tag whose version does not match `gh_vault.__version__` — the workflow
+  fails before upload.
+- Builds that do not land in the `pypi` environment — the GitHub environment
+  gate blocks them.
+
+## Local dry-run
+
+```bash
+python -m pip install --upgrade build twine
+python -m build
+twine check dist/*
+twine upload --repository testpypi dist/*   # only if you set up a TestPyPI trusted publisher
 ```
 
-Prefer the `UV_PUBLISH_TOKEN` environment variable and avoid storing the token on disk. `gh-vault secret sync` can keep the value in `pass` for this repo if you maintain it locally.
+## Rotation / teardown
 
-## Publish a release
-
-```sh
-# 1. Update __version__ in src/gh_vault/__init__.py
-$EDITOR src/gh_vault/__init__.py
-
-# 2. Update the changelog and commit the version bump.
-git add src/gh_vault/__init__.py
-git commit -m "chore(release): vX.Y.Z"
-git tag vX.Y.Z
-
-# 3. Clean previous builds, then build sdist + wheel from the source checkout.
-rm -rf dist/ build/ src/gh_vault.egg-info/
-uv build
-
-# 4. Verify the artifact (metadata, license file, README) before upload.
-uv publish --dry-run
-
-# 5. Upload to PyPI.
-uv publish
-
-# 6. Push the tag so the release on GitHub matches PyPI.
-git push origin vX.Y.Z
-```
-
-`uv build` reads the version dynamically from `gh_vault.__version__`, so both the sdist and the wheel inherit the single `__version__` string — no separate `VERSION` file or duplicated `version =` field. The `LICENSE` file ships inside the sdist and the wheel; PyPI's license expression resolves to MIT through `license = "MIT"` and `license-files = ["LICENSE"]` in `pyproject.toml`.
-
-## Version policy
-
-Follow [Semantic Versioning](https://semver.org/). Before `1.0.0`, minor bumps may include breaking changes; the project documents these in release notes.
+- Trusted publishers are scoped per repo + workflow filename + environment.
+  Renaming the workflow or the `pypi` environment invalidates the publisher —
+  re-add it on PyPI.
+- No API token is stored in GitHub, so there is nothing to rotate. To revoke
+  access, delete the trusted publisher on PyPI and the `pypi` environment on
+  GitHub.

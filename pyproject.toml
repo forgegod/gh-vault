@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gh-vault"
+name = "forgegod-gh-vault"
 dynamic = ["version"]
 description = "Safely store GitHub credentials and project environment archives"
 readme = "README.md"
@@ -29,13 +29,13 @@ classifiers = [
 ]
 
 [project.scripts]
-gh-vault = "gh_vault.cli:main"
+forgegod-gh-vault = "gh_vault.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/raphaelBossek/gh-vault"
-Repository = "https://github.com/raphaelBossek/gh-vault"
-Issues = "https://github.com/raphaelBossek/gh-vault/issues"
-Changelog = "https://github.com/raphaelBossek/gh-vault/releases"
+Homepage = "https://github.com/forgegod/gh-vault"
+Repository = "https://github.com/forgegod/gh-vault"
+Issues = "https://github.com/forgegod/gh-vault/issues"
+Changelog = "https://github.com/forgegod/gh-vault/releases"
 
 [tool.setuptools.dynamic]
 version = { attr = "gh_vault.__version__" }

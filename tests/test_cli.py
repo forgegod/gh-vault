@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import re
 from pathlib import Path
 
 import pytest
@@ -34,8 +35,45 @@ class MemoryStore:
 
 def test_profile_name_validation() -> None:
     assert cli.profile_name("release-write.v2") == "release-write.v2"
-    with pytest.raises(argparse.ArgumentTypeError):
+    assert cli.profile_name("forgegod") == "forgegod"
+    assert cli.profile_name("a_b") == "a_b"
+    with pytest.raises(argparse.ArgumentTypeError, match=cli.PROFILE_NAME_ERROR):
         cli.profile_name("bad name")
+    with pytest.raises(argparse.ArgumentTypeError, match=cli.PROFILE_NAME_ERROR):
+        cli.profile_name("_gh_forgegod")
+    with pytest.raises(argparse.ArgumentTypeError, match=cli.PROFILE_NAME_ERROR):
+        cli.profile_name("-leading-dash")
+    with pytest.raises(argparse.ArgumentTypeError, match=cli.PROFILE_NAME_ERROR):
+        cli.profile_name(".leading-dot")
+
+
+@pytest.mark.parametrize(
+    ("token", "match"),
+    [
+        ("", "token is empty"),
+        ("gho_" + "a" * 35 + "\nanother", "single line"),
+        ("gho_short", "outside the supported range"),
+        ("x" * 300, "outside the supported range"),
+        ("gho_" + ("ab " * 12), "outside the GitHub token alphabet"),
+        ("gho_" + "*" * 40, "masked output of 'gh auth status'"),
+        ("ghp_" + "*" * 40, "masked output of 'gh auth status'"),
+        ("ghs_" + "*" * 40, "masked output of 'gh auth status'"),
+        ("gho_" + "0E" + "VCOJ" + "x" * 30, ""),
+    ],
+)
+def test_validate_token_format(token: str, match: str) -> None:
+    if match:
+        with pytest.raises(StoreError, match=re.escape(match)):
+            cli._validate_token_format(token)
+    else:
+        assert cli._validate_token_format(token) == token
+
+
+def test_read_token_rstrips_newlines_before_format_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A stdin that holds only a trailing newline must surface as empty, not "single line".
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+    with pytest.raises(StoreError, match="token is empty"):
+        cli._read_token(True)
 
 
 def test_parse_scopes_trims_and_deduplicates() -> None:

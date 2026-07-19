@@ -19,9 +19,11 @@ Production package for storing named GitHub tokens and project environment archi
 ## Local Contracts
 
 - `gh-vault` is the only console command and enters `gh_vault.cli:main`; do not add aliases that collide with shell tooling.
-- Profile names are 1–64 characters and contain only letters, digits, `.`, `_`, or `-`; the first character is alphanumeric.
+- Profile names are 1–64 characters; the first character must be a letter or digit, and the remaining characters may be letters, digits, `.`, `_`, or `-`. Leading `_`, `-`, or `.` is rejected with a single error message naming both the length and the leading-character rule.
 - `set` always creates or replaces the named profile.
 - `set` validates a token with GitHub, prints its discovered scopes and available expiration without printing the token, and discovers classic-PAT scopes when `--scopes` is absent; explicit `--scopes` is trimmed, order-preserving, and deduplicated. GitHub-provided token expiration metadata is stored when available.
+- `set` rejects tokens before any network call when they are empty, contain newline characters, fail the `gh[pousr]_\*+` / `github_pat_\*+` masked-output sentinel (the literal that `gh auth status` prints without `-t`), fall outside 36..255 characters, or contain characters outside `[A-Za-z0-9_]`. The error message identifies the failing gate so the caller can correct the input.
+- `find` skips the length, alphabet, and masked-output gates but still rejects empty and multiline candidates; this lets existing profiles be located by short synthetic tokens used in fixtures and tests.
 - Token values are non-empty single lines stored only through `pass` under `gh-vault/<profile>` in `${PASSWORD_STORE_DIR:-~/.password-store}`. Encrypted environment payloads stay below the same namespace; only explicitly public variable payloads may use `EnvironmentStore`. Secret reads remove only the single record-separator newline emitted by `pass`, preserving newlines that belong to multiline payloads.
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
 - `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; every directory is mode `0700`, every JSON file is mode `0600`, and payload/index schemas remain separate and origin-bound.

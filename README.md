@@ -73,7 +73,7 @@ The password store root follows `${PASSWORD_STORE_DIR:-~/.password-store}`. Meta
 
 ## Token profiles
 
-A profile is a named GitHub token stored in the encrypted vault. Profile names are 1–64 characters: letters, digits, `.`, `_`, or `-`; the first character is alphanumeric.
+A profile is a named GitHub token stored in the encrypted vault. Profile names match the pattern `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` — 1 to 64 characters, the first character must be a letter or digit, and the remaining characters may be letters, digits, `.`, `_`, or `-`. Leading `-`, `_`, or `.` is rejected. The validator's error message names both rules.
 
 ### Create or replace a profile
 
@@ -89,11 +89,18 @@ gh-vault set production --note "org-wide deploy key"
 
 # Read token from stdin for automation
 printf '%s' "$TOKEN" | gh-vault set ci --stdin
+
+# Pipe the live GitHub CLI token into a profile. Choose any valid name, e.g.
+# the GitHub login or a topic-scoped alias. Profile names cannot start with
+# `_`, `-`, or `.`.
+gh auth token | gh-vault set ghcli-forgegod --stdin
 ```
 
 `set` always creates or replaces the profile. When `--scopes` is omitted, `set` makes one authenticated request to `https://api.github.com/user`. A successful response validates the token and records:
 
 - Classic PATs: scopes from the `X-OAuth-Scopes` header, expiration from `GitHub-Authentication-Token-Expiration` when present.
+
+Before contacting GitHub, `--stdin` rejects inputs that are empty, multiline, shorter than 36 or longer than 255 characters, contain characters outside `[A-Za-z0-9_]`, or match the masked-output sentinel that `gh auth status` prints without `-t` (a recognised `gh[pousr]_*` or `github_pat_*` prefix followed by run of `*`). The error message names the failing gate so a misconfigured pipeline fails fast instead of being stored as a worthless token.
 - Fine-grained tokens: scope list stays empty (GitHub does not expose classic scopes), expiration is still recorded when GitHub provides it.
 
 When `--scopes` is supplied, the manual scopes are stored verbatim and scope detection is skipped. If the token cannot be validated against GitHub but `--scopes` was supplied, the profile is still created without validation. Without `--scopes`, a failed validation aborts the profile creation.

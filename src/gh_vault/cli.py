@@ -14,13 +14,38 @@ from .envfiles import archive_environment, example_file_for, format_dotenv_value
 from .github import TokenMetadata, inspect_token
 from .store import EnvironmentStore, Profile, StoreError, VaultStore
 
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
+PROFILE_NAME_ERROR = "must be 1-64 characters; first character must be a letter or digit, the rest may be letters, digits, dot, underscore, or hyphen"
+
+# GitHub token alphabets by class.
+#   classic PAT: 36+ chars from [A-Za-z0-9_] beginning with a known prefix.
+#   fine-grained: prefix 'github_pat_' followed by 22+ base62-or-underscore chars.
+#   OAuth user token (gho_*): 36 chars.
+# The masked-output sentinel that `gh auth status` prints without -t looks
+# like a prefix followed by a run of '*' characters. Reject it before any
+# network call.
+_GH_MASKED_SENTINEL = re.compile(r"^(?:gh[pousr]_|github_pat_)\*+$")
+_TOKEN_ALPHABET = re.compile(r"^[A-Za-z0-9_]+$")
 
 
 def profile_name(value: str) -> str:
     if not NAME_PATTERN.fullmatch(value):
-        raise argparse.ArgumentTypeError("must be 1-64 characters: letters, digits, dot, underscore, or hyphen")
+        raise argparse.ArgumentTypeError(PROFILE_NAME_ERROR)
     return value
+
+
+def _validate_token_format(token: str) -> str:
+    if not token:
+        raise StoreError("token is empty")
+    if "\n" in token or "\r" in token:
+        raise StoreError("token must be a single line")
+    if _GH_MASKED_SENTINEL.fullmatch(token):
+        raise StoreError("token is the masked output of 'gh auth status' without -t; rerun with -t or use 'gh auth token'")
+    if len(token) < 36 or len(token) > 255:
+        raise StoreError(f"token length {len(token)} is outside the supported range 36..255")
+    if not _TOKEN_ALPHABET.fullmatch(token):
+        raise StoreError("token contains characters outside the GitHub token alphabet")
+    return token
 
 
 def parse_scopes(value: str) -> tuple[str, ...]:
@@ -81,12 +106,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_token(use_stdin: bool) -> str:
+def _read_token(use_stdin: bool, *, enforce_format: bool = True) -> str:
     if use_stdin:
-        return sys.stdin.read().rstrip("\r\n")
-    if not sys.stdin.isatty():
+        token = sys.stdin.read().rstrip("\r\n")
+    elif not sys.stdin.isatty():
         raise StoreError("refusing to prompt without a TTY; use --stdin")
-    return getpass.getpass("GitHub token: ")
+    else:
+        token = getpass.getpass("GitHub token: ")
+    if enforce_format:
+        return _validate_token_format(token)
+    if not token or "\n" in token or "\r" in token:
+        raise StoreError("token must be a non-empty single line")
+    return token
 
 
 def _set(store: VaultStore, args: argparse.Namespace) -> int:
@@ -125,9 +156,7 @@ def _status(store: VaultStore) -> int:
 def _find(store: VaultStore, use_stdin: bool) -> int:
     if not use_stdin:
         raise StoreError("find requires --stdin")
-    token = _read_token(True)
-    if not token or "\n" in token or "\r" in token:
-        raise StoreError("token must be a non-empty single line")
+    token = _read_token(True, enforce_format=False)
     matches = [profile.name for profile in store.profiles() if store.get(profile.name) == token]
     for name in matches:
         print(name)

@@ -108,6 +108,14 @@ gh-vault activate repo-read      # select the default profile
 gh-vault status                  # show the active profile; exits 1 if none
 ```
 
+To check whether a token is already stored without exposing every vault value:
+
+```sh
+printf '%s' "$TOKEN" | gh-vault find --stdin
+```
+
+`find` prints each matching profile name and exits `0` when at least one match exists. An unknown token produces no output and exits `1`. The token is accepted only through explicit `--stdin`; empty and multiline values are rejected.
+
 ### Remove a profile
 
 ```sh

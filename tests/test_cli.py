@@ -58,6 +58,7 @@ def test_add_command_is_removed() -> None:
         (["list", "--help"], "Display stored token profiles"),
         (["activate", "--help"], "Select the token profile"),
         (["status", "--help"], "Show the profile selected"),
+        (["find", "--help"], "Find profiles containing a token read from standard input"),
         (["output", "--help"], "Print only the selected token"),
         (["remove", "--help"], "Delete a token profile"),
         (["run", "--help"], "Run a child command"),
@@ -514,6 +515,37 @@ def test_output_prints_only_selected_token(capsys: pytest.CaptureFixture[str]) -
 
     assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
     assert capsys.readouterr().out == "token-write\n"
+
+
+def test_find_prints_matching_profile_names_only(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["find", "--stdin"])
+    monkeypatch.setattr("sys.stdin", io.StringIO("token-write\n"))
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert capsys.readouterr().out == "write\n"
+
+
+def test_find_returns_one_without_output_when_token_is_unknown(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["find", "--stdin"])
+    monkeypatch.setattr("sys.stdin", io.StringIO("unknown-token"))
+
+    assert cli.dispatch(args, MemoryStore()) == 1  # type: ignore[arg-type]
+    assert capsys.readouterr().out == ""
+
+
+def test_find_requires_explicit_stdin() -> None:
+    args = cli.build_parser().parse_args(["find"])
+
+    with pytest.raises(StoreError, match="find requires --stdin"):
+        cli.dispatch(args, MemoryStore())  # type: ignore[arg-type]
+
+
+def test_find_rejects_empty_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = cli.build_parser().parse_args(["find", "--stdin"])
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
+
+    with pytest.raises(StoreError, match="token must be a non-empty single line"):
+        cli.dispatch(args, MemoryStore())  # type: ignore[arg-type]
 
 
 def test_git_credential_returns_selected_token_only_for_github(

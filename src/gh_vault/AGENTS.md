@@ -26,6 +26,7 @@ Production package for storing named GitHub tokens and project environment archi
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
 - `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; every directory is mode `0700`, every JSON file is mode `0600`, and payload/index schemas remain separate and origin-bound.
 - The first set profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
+- `find --stdin` reads one candidate token from standard input, compares it against every configured profile inside the process, prints only matching profile names, exits `0` when at least one profile matches, and exits `1` silently when none match. Empty or multiline candidates are rejected and token values never appear in output or errors.
 - `output [--name PROFILE]` intentionally prints only the selected token plus one trailing newline so callers can pipe it to a credential consumer such as `docker login --password-stdin`; it emits no labels or metadata.
 - `run` sets both `GH_TOKEN` and `GITHUB_TOKEN` only in the exec'd child environment and does not mutate the invoking shell.
 - `git-credential get` responds only to HTTPS requests for `github.com`. `store` and `erase` are no-ops, and token output is limited to Git's exact credential response.

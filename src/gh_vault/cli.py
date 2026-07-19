@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("list", help="list token profiles", description="Display stored token profiles, their scopes, expiration, and active selection.")
     activate = commands.add_parser("activate", help="select the default profile", description="Select the token profile used when a command does not name one."); activate.add_argument("name", type=profile_name, help="profile name")
     commands.add_parser("status", help="show the active profile", description="Show the profile selected as the default GitHub token.")
+    find = commands.add_parser("find", help="find profiles by token", description="Find profiles containing a token read from standard input without printing the token."); find.add_argument("--stdin", action="store_true", help="read the token from standard input")
     output = commands.add_parser("output", help="print a token for piping", description="Print only the selected token to standard output for piping into another command."); output.add_argument("--name", type=profile_name, help="profile name; defaults to the active profile")
     remove = commands.add_parser("remove", help="delete a profile", description="Delete a token profile and its encrypted token from the vault."); remove.add_argument("name", type=profile_name, help="profile name")
     run = commands.add_parser("run", help="run a command with a token", description="Run a child command with the selected token in its environment only."); run.add_argument("--name", type=profile_name, help="profile name; defaults to the active profile"); run.add_argument("program", nargs=argparse.REMAINDER, help="command to run, after --")
@@ -121,6 +122,18 @@ def _status(store: VaultStore) -> int:
     store.get(active); print(f"Active profile: {active}"); return 0
 
 
+def _find(store: VaultStore, use_stdin: bool) -> int:
+    if not use_stdin:
+        raise StoreError("find requires --stdin")
+    token = _read_token(True)
+    if not token or "\n" in token or "\r" in token:
+        raise StoreError("token must be a non-empty single line")
+    matches = [profile.name for profile in store.profiles() if store.get(profile.name) == token]
+    for name in matches:
+        print(name)
+    return 0 if matches else 1
+
+
 def _run(store: VaultStore, name: str | None, program: list[str]) -> int:
     if program and program[0] == "--": program = program[1:]
     if not program: raise StoreError("run requires a command after --")
@@ -194,6 +207,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "list": return _list(store)
     if args.command == "activate": store.activate(args.name); print(f"Active profile: {args.name}"); return 0
     if args.command == "status": return _status(store)
+    if args.command == "find": return _find(store, args.stdin)
     if args.command == "output": print(store.get(args.name)); return 0
     if args.command == "remove": store.remove(args.name); print(f"Removed profile: {args.name}"); return 0
     if args.command == "run": return _run(store, args.name, args.program)

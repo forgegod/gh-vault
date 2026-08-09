@@ -247,6 +247,31 @@ The `# gh-vault: secret <profile>` shape references a token stored in `pass` und
 
 The directive is gh-vault's opt-in declaration for archive storage, GitHub synchronization, and workflow validation. GitHub may contain manually managed Secrets or Variables, but gh-vault does not treat them as managed workflow values without the matching local directive.
 
+### Rotate a linked personal access token
+
+Use a profile reference when a GitHub Actions Secret must receive the token stored in a named gh-vault profile:
+
+```dotenv
+# gh-vault: secret ci-pat
+GITHUB_TOKEN=
+```
+
+Create the replacement PAT in GitHub's token settings with the same required access. `gh auth refresh` only reauthorizes the GitHub CLI's OAuth credentials and scopes; neither it nor gh-vault can create or rotate a PAT. Keep the current PAT valid until the replacement is verified.
+
+```sh
+# Replace the profile's encrypted pass entry; the PAT never appears in argv.
+printf '%s' "$NEW_PAT" | gh-vault set ci-pat --stdin
+
+# Resolve the profile reference and update the GitHub Actions Secret.
+gh-vault secret sync --dry-run
+gh-vault secret sync
+
+# Confirm the declaration exists as a GitHub Secret with the expected type.
+gh-vault secret check
+```
+
+Then run the workflow or authenticated operation that consumes `GITHUB_TOKEN`. `secret check` cannot confirm a Secret's value because GitHub never returns stored Secret values. Revoke the previous PAT in GitHub only after that operation succeeds. This process replaces the vault profile and GitHub Actions Secret; it does not archive the profile reference or modify the `.env` placeholder.
+
 ### Migrate legacy declarations and archives
 
 Migration is explicitly two-stage so classification is reviewed before any value enters clear-text storage:

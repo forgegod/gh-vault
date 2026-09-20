@@ -4,9 +4,9 @@
 
 gh-vault is a Linux-oriented Python 3.10+ command-line application for named
 GitHub tokens, typed project environments, Actions values, and workflow wiring.
-The `forgegod-gh-vault` distribution installs the same-named executable;
+The `forgegod-gh-vault` distribution installs the `gh-vault` executable;
 `python -m gh_vault` delegates to the same dispatcher. Argparse displays the
-product label `gh-vault`. The package has no declared third-party Python runtime
+same product label. The package has no declared third-party Python runtime
 dependencies. `pass`, GPG, Git, `gh`, and act are external tools used by the
 operations that need them, not embedded services.
 

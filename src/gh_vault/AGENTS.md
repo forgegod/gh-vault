@@ -18,7 +18,7 @@ Production package for storing named GitHub tokens and project environment archi
 
 ## Local Contracts
 
-- `forgegod-gh-vault` is the installed console command and enters `gh_vault.cli:main`; argparse displays `gh-vault` and `python -m gh_vault` uses the same entry point; do not add aliases that collide with shell tooling.
+- The `forgegod-gh-vault` distribution installs the `gh-vault` console command, which enters `gh_vault.cli:main`; argparse and `python -m gh_vault` use the same dispatcher. Do not add compatibility aliases that collide with shell tooling.
 - Profile names are 1–64 characters; the first character must be a letter or digit, and the remaining characters may be letters, digits, `.`, `_`, or `-`. Leading `_`, `-`, or `.` is rejected with a single error message naming both the length and the leading-character rule.
 - `set` always creates or replaces the named profile.
 - `set` attempts GitHub inspection even with `--scopes`, printing discovered metadata only on success. Without explicit scopes, inspection failure aborts; with explicit scopes, it stores the override even if inspection fails; explicit `--scopes` is trimmed, order-preserving, and deduplicated. GitHub-provided token expiration metadata is stored when available.

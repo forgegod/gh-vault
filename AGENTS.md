@@ -85,7 +85,7 @@ Default section order:
 
 ## Project intent
 
-gh-vault is a Python CLI for named GitHub tokens, typed project environment archives, GitHub Actions values, and local workflow validation. It delegates encryption to `pass`/GPG and remote Actions operations to `gh`. The distribution and installed console command are `forgegod-gh-vault`; argparse displays the product name `gh-vault`. `python -m gh_vault` is the module entry point.
+gh-vault is a Python CLI for named GitHub tokens, typed project environment archives, GitHub Actions values, and local workflow validation. It delegates encryption to `pass`/GPG and remote Actions operations to `gh`. The PyPI distribution is `forgegod-gh-vault`; its installed console command and argparse product name are `gh-vault`. `python -m gh_vault` is the module entry point.
 
 ## Architectural decisions
 

@@ -29,7 +29,7 @@ classifiers = [
 ]
 
 [project.scripts]
-forgegod-gh-vault = "gh_vault.cli:main"
+gh-vault = "gh_vault.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/forgegod/gh-vault"

@@ -15,11 +15,11 @@
 - `src/gh_vault/cli.py` — _find, _run, _git_credential, _credential_host, dispatch, main.
 - `src/gh_vault/store.py` — VaultStore token selection and lookup.
 - `src/gh_vault/__main__.py` — module entry point.
-- `pyproject.toml` — installed forgegod-gh-vault console entry point.
+- `pyproject.toml` — `gh-vault` console entry point for the `forgegod-gh-vault` distribution.
 
 ## Rules and boundaries
 
-- The installed executable is `forgegod-gh-vault`; argparse's usage label remains `gh-vault`. `python -m gh_vault` uses the same dispatcher.
+- The `forgegod-gh-vault` distribution installs `gh-vault`; `python -m gh_vault` uses the same dispatcher. `forgegod-gh-vault` is not an installed compatibility executable.
 - Credential stdout is intentional only for `output` and the credential-helper response. Do not run those in a logged terminal or capture their output in records.
 - Child environment delivery is not a sandbox: the child inherits the rest of the environment and can disclose its token. StoreError becomes an argparse error at the main CLI boundary.
 
@@ -27,7 +27,7 @@
 
 - `tests/test_cli.py` — `test_find_prints_matching_profile_names_only`, `test_find_returns_one_without_output_when_token_is_unknown`, `test_find_requires_explicit_stdin`, and `test_find_rejects_empty_token` cover lookup outcomes.
 - `tests/test_cli.py` — `test_output_prints_only_selected_token`, `test_git_credential_returns_selected_token_only_for_github`, `test_run_executes_with_both_supported_environment_variables`, and `test_run_requires_a_command` prove response shapes and intercepted process handoff.
-- `tests/test_cli.py` — `test_parser_uses_public_command_name` pins the usage label, not executable installation. Wheel installation and `forgegod-gh-vault --help` are separate packaging checks.
+- `tests/test_cli.py` — `test_parser_uses_public_command_name` and `test_project_declares_short_console_command` pin the shared parser label and declared console-script boundary. Isolated-install verification exercises the generated executable.
 - Run `uv run --no-project --with pytest python -m pytest tests/test_cli.py`.
 - Credential tests use synthetic tokens; exec is intercepted. They do not authenticate Git or a downstream consumer.
 

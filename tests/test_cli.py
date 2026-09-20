@@ -84,6 +84,15 @@ def test_parser_uses_public_command_name() -> None:
     assert cli.build_parser().prog == "gh-vault"
 
 
+def test_project_declares_short_console_command() -> None:
+    project_config = Path(__file__).parents[1] / "pyproject.toml"
+    contents = project_config.read_text(encoding="utf-8")
+
+    assert 'name = "forgegod-gh-vault"' in contents
+    assert '[project.scripts]\ngh-vault = "gh_vault.cli:main"' in contents
+    assert 'forgegod-gh-vault = "gh_vault.cli:main"' not in contents
+
+
 def test_add_command_is_removed() -> None:
     with pytest.raises(SystemExit, match="2"):
         cli.build_parser().parse_args(["add", "release"])

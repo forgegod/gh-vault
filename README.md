@@ -20,6 +20,32 @@ gpg --full-generate-key
 pass init YOUR_GPG_KEY_ID
 ```
 
+### GPG unlock duration
+
+`gh-vault` delegates encryption and decryption to `pass` and GPG. The GPG
+agent, not `gh-vault`, decides when the private key's passphrase must be
+entered. Configure the user-level agent cache in `~/.gnupg/gpg-agent.conf`:
+
+```conf
+# Seconds; 12 hours.
+default-cache-ttl 43200
+max-cache-ttl 43200
+```
+
+Then reload the agent configuration:
+
+```sh
+gpgconf --reload gpg-agent
+```
+
+Set both values: `default-cache-ttl` controls the idle timeout, while
+`max-cache-ttl` is the absolute limit. With both at `43200`, unlock once and
+GPG will ask again after at most 12 hours, even if the vault is used during
+that period. Choose any positive number of seconds to configure a different
+duration. This policy applies to every GPG private-key operation by the user,
+not only `gh-vault`. To clear cached access early, run
+`gpgconf --kill gpg-agent` or end the user session.
+
 ## Installation
 
 Install `gh-vault` from PyPI:

@@ -1,0 +1,47 @@
+# Cross-cutting design decisions
+
+These entries explain durable choices, not implementation progress. The live
+contracts are [architecture](architecture.md), [security](security.md), root
+DOX, and the [capability records](product/index.md).
+
+## Delegate cryptography and unlocking
+
+Tokens and secret archives use `pass`/GPG rather than an application-owned key
+store. Key management and passphrase cache lifetime stay with the operator's
+GPG agent. gh-vault owns profile selection and command integration, not a second
+unlock/session mechanism.
+
+## Separate public variables from secrets
+
+An adjacent explicit directive is the sensitivity decision. Public variables
+can be inspected/restored without decrypting a secret; tokens and secret values
+remain behind the encrypted backend. A value-free public index supports archive
+inventory. Secret-to-variable migration requires reviewed classification because
+it permits plaintext persistence, not merely a different API name.
+
+## Bind archives to repository origin
+
+A normalized host/path gives stable storage placement, while exact origin
+metadata rejects a mismatched payload. The same repository reached through a
+different URL spelling can share the namespace but still fail the origin check;
+normalization does not authorize rewriting stored origin metadata.
+
+## Make credential delivery explicit
+
+Child-only environments, stdin for external tool writes, and narrowly named
+stdout commands provide explicit consumer boundaries. They do not make the
+child trusted or prevent it from logging credentials. No implicit profile
+fallback is used when selection is absent.
+
+## Separate current behavior, progress, and rationale
+
+CAPs state behavior with executable evidence. An active CHG carries material
+change progress; tickets state requests and archives retain receipts. DOX owns
+maintenance rules, and these decisions explain cross-cutting tradeoffs. None is
+a substitute for source and assertions.
+
+The record validator is kept as dependency-free Node developer tooling so its
+lifecycle, review, and visual-inventory regressions remain executable. Python
+test filenames are recognized without broadening arbitrary modules into test
+evidence. This does not add a JavaScript application stack or a runtime
+installation requirement.

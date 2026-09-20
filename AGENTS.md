@@ -76,41 +76,58 @@ Default section order:
 
 ## User Preferences
 
-When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md.
-
-Project-wide durable preferences (style, workflow, conventions) live in user memory; this section is reserved for contract-level rules that bind every child doc.
-
 - Documentation describes the current project state only; git carries the timeline and retired designs.
 - Keep documentation concise and cross-reference owning docs rather than duplicating them.
+- Use explicit markers such as `@file:` rather than inferring file-path intent.
+- Use synthetic fixtures, never operator credentials or real project environments, for verification.
+- Local-commit checks are offline. Remote `secret sync --dry-run` / `secret check` and the matching variable commands belong to pre-push review when their declarations change, not to ordinary local tests.
+- Do not commit, tag, publish, or push without an explicit operator request.
+
+## Project intent
+
+gh-vault is a Python CLI for named GitHub tokens, typed project environment archives, GitHub Actions values, and local workflow validation. It delegates encryption to `pass`/GPG and remote Actions operations to `gh`. The distribution and installed console command are `forgegod-gh-vault`; argparse displays the product name `gh-vault`. `python -m gh_vault` is the module entry point.
 
 ## Architectural decisions
 
 - **Agent harness protected by tirith.sh.** Reading passwords or access tokens is prohibited. Extract variables from `.env` / config files without relaying their values; use environment variables by importing them for Bash execution. `***` in output is a tirith redaction marker, not a literal value — never "fix" it to a variable ref.
 - **Split vault backend.** Tokens, secret environment values, and eligible templates belong only in `pass` entries below `gh-vault/`. Explicit `# gh-vault: variable` values may use the restrictive XDG archive store; local and secret values must never enter it or metadata indexes.
-- **Intentional credential output boundary.** Token values must not reach stdout except for the exact `git-credential get` response Git requires.
+- **Intentional credential output boundary.** The explicit `output` command and Git's exact `git-credential get` response may emit a token. Ordinary status, listing, diagnostics, and metadata must not. See `docs/security.md` for plaintext process/file boundaries.
 - **Unlock lifetime belongs to GPG.** `gh-vault` delegates passphrase caching to the user-level `gpg-agent`; it does not own or override the cache timeout. User documentation shows both `default-cache-ttl` and `max-cache-ttl` so an operator can choose the unlock duration.
+- **Record authority.** `docs/product/capabilities/CAP-*.md` describes current material behavior at this revision, backed by implementation and executable tests. Code and tests decide conflicts; documentation must be reconciled in the same change.
+- **Change progress.** `docs/changes/active/CHG-*.md` is the single repository authority for progress on a material request. Tickets explain requests; archived CHGs are receipts, not current product contracts. Private plans are not resumable project authority.
+- **Material slices.** A material behavior change updates the affected CAP, tests, and active CHG together. Behavior-preserving refactors do not create record churn. Completed changes archive only after their integration gates pass and CAPs describe the resulting behavior.
+- **Visual lifecycle.** Every CAP declares `Primary surface: human` or `none`. The command-line/protocol surfaces have no primary visual screen. A future primary screen or visual interaction requires canonical generated HTML/PNG under `docs/product/wireframes/`; proposals belong to CHG-owned `docs/changes/reviews/CHG-<number>/` packages.
+- **Tooling boundary.** Python remains the product runtime. Node.js 22+ is development-only tooling for the dependency-free record validator and its synthetic regression tests; no Node package manager or application dependency is required.
+
+## Architectural non-goals
+
+- No hosted service, graphical application, alternative secret backend, or application database.
+- No PAT issuance/rotation service and no control over GPG agent cache lifetime.
+- No shell evaluation of dotenv data, implicit legacy-archive migration, or automatic secret-to-public reclassification.
+- No live GitHub, GPG, password-store, or release operations in the credential-free test gate.
+- No duplicate progress system or fabricated historical change receipts.
+
+## Architecture change control
+
+Stop for explicit approval before changing an architectural decision or non-goal. An approved change updates this rail, `docs/architecture.md`, affected child DOX and behavior tests, and `docs/design-decisions.md` for irreversible or cross-cutting forks. Read `docs/security.md` for secret-handling changes.
+
+## Product and change records
+
+- Read `docs/product/README.md` and `docs/changes/README.md` before creating, editing, splitting, or closing records.
+- Read both product/change child DOX and the wireframe child if present before choosing visual artifact paths. Review packages never replace canonical product visuals or behavior tests.
+- Use the repository-local `skills/software-development/application-records/SKILL.md` and matching `phased-plan-*` family for material work. Read these files directly if an installed skill of the same name uses a different lifecycle. Their execution aids cannot override DOX or authorize commits.
+
+## Workspace verification
+
+- `make verify` runs record validation, Node validator regressions, and the offline Python suite.
+- `make records-check` runs `node scripts/check-product-records.mjs`.
+- `make test` runs `node --test "tests/records/*.test.mjs"` and `uv run --no-project --with pytest python -m pytest` without changing the application environment or lockfile.
+- `.github/workflows/ci.yml` runs the same gate on pushes and pull requests. Tag-driven publishing remains separate under `docs/RELEASING.md`.
+- Record checks prove structure, links, and lifecycle, not truth of CAP claims, live service behavior, visual freshness, or approval. Review those boundaries explicitly.
 
 ## Codebase Knowledge Graph (codebase-memory-mcp)
 
-This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.
-ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
-
-### Priority Order
-1. `search_graph` — find functions, classes, routes, variables by pattern
-2. `trace_path` — trace who calls a function or what it calls
-3. `get_code_snippet` — read specific function/class source code
-4. `query_graph` — run Cypher queries for complex patterns
-5. `get_architecture` — high-level project summary
-
-### When to fall back to grep/glob
-- Searching for string literals, error messages, config values
-- Searching non-code files (Dockerfiles, shell scripts, configs)
-- When MCP tools return insufficient results
-
-### Examples
-- Find a handler: `search_graph(name_pattern=".*OrderHandler.*")`
-- Who calls it: `trace_path(function_name="OrderHandler", direction="inbound")`
-- Read source: `get_code_snippet(qualified_name="pkg/orders.OrderHandler")`
+Prefer the indexed graph for structural discovery and call relationships. Verify its coverage before trusting results; use source searches for literals, non-code files, unavailable or incomplete graph results. Actual source and assertions remain authoritative.
 
 ## Child DOX Index
 
@@ -119,7 +136,10 @@ ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 | `assets/AGENTS.md` | Brand identity, deterministic asset generation, vector sources, raster renders, and bundled font | `assets/**`, logo geometry, palette, typography, or social-preview copy |
 | `src/gh_vault/AGENTS.md` | Production Python package, CLI behavior, secret backend, environment archives, and metadata persistence | `src/gh_vault/**`, console command behavior, storage, archive, or security contracts |
 | `tests/AGENTS.md` | Pytest fixtures and executable CLI/store contracts | `tests/**`, test conventions, or verification coverage |
-| `docs/AGENTS.md` | Release workflow, PyPI trusted-publishing setup, tag-driven publishing contract | `docs/**`, `.github/workflows/publish.yml`, PyPI environment, tag conventions |
+| `docs/AGENTS.md` | Architecture, security, release documentation, product and change records | `docs/**`, current behavior, evidence, or change progress |
+| `scripts/AGENTS.md` | Dependency-free product-record validator | `scripts/**`, record validation rules |
+| `.github/AGENTS.md` | Credential-free CI and tag-driven publishing | `.github/**`, quality gates or publishing |
+| `skills/AGENTS.md` | Repository-local CAP/CHG and visual-handoff playbooks | `skills/**`, agent workflow packaging |
 
 Root-owned artifacts:
 
@@ -127,3 +147,4 @@ Root-owned artifacts:
 - `pyproject.toml` — package metadata, dynamic version (`gh_vault.__version__`), PyPI license/classifiers/URLs, console entry points, source layout, and pytest configuration.
 - `.gitignore` — generated and local-only artifacts excluded from version control.
 - `LICENSE` — MIT license terms (mode `0644`; bundled into sdist and wheel).
+- `Makefile` — maintenance record and test gates; no product build-system replacement.

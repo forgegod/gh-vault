@@ -14,7 +14,7 @@ PyPI publishing is fully automated via GitHub Actions trusted publishing
    - Environment name: `pypi`
 
    The PyPI project name must match the wheel's `Name:` field — that comes
-   from `pyproject.toml`'s `[project] name`, currently `forgegod-gh-vault`.
+   from `pyproject.toml`'s `[project] name`, `forgegod-gh-vault`.
    Create the PyPI project with that exact name (PyPI will accept the first
    trusted-publisher upload as the project's initial release if no project of
    that name exists yet).
@@ -25,7 +25,7 @@ PyPI publishing is fully automated via GitHub Actions trusted publishing
 
 ## Cutting a release
 
-1. Bump `gh_vault.__version__` in `src/gh_vault/__init__.py`.
+1. Run `make verify`, then bump `gh_vault.__version__` in `src/gh_vault/__init__.py`.
 2. Commit on `main`.
 3. Tag with the exact same version, prefixed `v`, and push the tag:
 
@@ -56,11 +56,19 @@ PyPI publishing is fully automated via GitHub Actions trusted publishing
 ## Local dry-run
 
 ```bash
-python -m pip install --upgrade build twine
-python -m build
-twine check dist/*
-twine upload --repository testpypi dist/*   # only if you set up a TestPyPI trusted publisher
+uv build
+uvx --from twine twine check dist/*
 ```
+
+These commands build and validate package metadata; they do not upload anything.
+Use a fresh output directory (`uv build --out-dir PATH`) when old artifacts are
+present. Local Twine does not obtain GitHub Actions OIDC credentials merely
+because a trusted publisher exists. Any TestPyPI upload needs its own authorized
+authentication path and is not part of this check.
+
+The branch/PR quality workflow runs `make verify` without credentials. The
+separate tag publishing workflow builds and publishes; it does not itself run
+the product test gate. Check the release revision before tagging.
 
 ## Rotation / teardown
 

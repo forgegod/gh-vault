@@ -21,6 +21,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 - Secret assertions use synthetic values and verify that metadata does not contain them.
 - CLI process replacement is intercepted with `monkeypatch`; tests must not exec real child commands.
 - Environment and workflow tests use temporary files plus mocked Git/GitHub subprocess boundaries; they must not read a real `.env`, password store, or GitHub account.
+- Environment-scoped Actions tests assert the read-only GitHub Environment preflight and every `--env` argument, including the scope-local delete/migration boundary.
 - Git credential tests cover allowed protocol/host combinations and assert the exact protocol response.
 - Permission checks target POSIX mode `0700` for config/environment directories and `0600` for metadata, payload, and index JSON files.
 

@@ -169,6 +169,22 @@ def test_sync_parser_accepts_matching_options(command: str) -> None:
     assert args.migrate_types is False
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["secret", "sync", "--github-environment", "production"],
+        ["secret", "check", "--github-environment", "production"],
+        ["variable", "sync", "--github-environment", "production"],
+        ["variable", "check", "--github-environment", "production"],
+        ["variable", "import", "--env-file", ".env.production", "--github-environment", "production"],
+    ],
+)
+def test_remote_actions_commands_accept_an_explicit_github_environment(arguments: list[str]) -> None:
+    args = cli.build_parser().parse_args(arguments)
+
+    assert args.github_environment == "production"
+
+
 @pytest.mark.parametrize("command", ["secret", "variable"])
 def test_sync_parser_accepts_prune_and_migrate_types_separately(command: str) -> None:
     prune_args = cli.build_parser().parse_args([command, "sync", "--prune"])
@@ -377,6 +393,22 @@ def test_secret_sync_dispatches_only_secret_entries(monkeypatch: pytest.MonkeyPa
     assert captured["prune"] is True
     assert captured["migrate_types"] is False
     assert capsys.readouterr().out == "Would sync 1 secret(s); would prune 3 secret(s).\n"
+
+
+def test_secret_sync_dispatches_the_selected_github_environment(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    args = cli.build_parser().parse_args(["secret", "sync", "--github-environment", "production"])
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(cli, "action_values", lambda path, store: [ActionValue("API_KEY", "secret", "alpha")])
+
+    def fake_sync(entries, repo, kind, dry_run, migrate_types=False, prune=False, environment=None):
+        captured.update(repo=repo, kind=kind, environment=environment)
+        return SyncResult(1, 0)
+
+    monkeypatch.setattr(cli, "sync", fake_sync)
+
+    assert cli.dispatch(args, MemoryStore()) == 0  # type: ignore[arg-type]
+    assert captured == {"repo": "github.com/forgegod/gh-vault", "kind": "secret", "environment": "production"}
+    assert capsys.readouterr().out == "Synced 1 secret(s) to GitHub environment 'production'.\n"
 
 
 def test_variable_sync_dispatches_only_variable_entries(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

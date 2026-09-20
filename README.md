@@ -275,6 +275,23 @@ The `# gh-vault: secret <profile>` shape references a token stored in `pass` und
 
 The directive is gh-vault's opt-in declaration for archive storage, GitHub synchronization, and workflow validation. GitHub may contain manually managed Secrets or Variables, but gh-vault does not treat them as managed workflow values without the matching local directive.
 
+### Select repository or GitHub Environment scope
+
+Remote Actions commands target the repository by default. Add `--github-environment NAME` to target one existing GitHub Environment instead. The dotenv filename remains a local source/archive profile: `.env.production` does not implicitly select a remote `production` environment.
+
+```sh
+# Repository scope
+gh-vault secret sync --env-file .env
+
+# Existing GitHub Environment scope
+gh-vault secret sync --env-file .env.production --github-environment production
+gh-vault variable sync --env-file .env.production --github-environment production
+gh-vault secret check --env-file .env.production --github-environment production
+gh-vault variable check --env-file .env.production --github-environment production
+```
+
+Before an environment-scoped sync, check, or import, gh-vault reads that environment through the GitHub API and refuses an unknown target. It does not create an Environment or configure reviewers, wait timers, deployment policies, or protection rules. `--prune` and `--migrate-types` read, delete, and compare values only in the selected repository or environment scope; same-name values in another scope are independent.
+
 ### Rotate a linked personal access token
 
 Use a profile reference when a GitHub Actions Secret must receive the token stored in a named gh-vault profile:
@@ -314,7 +331,7 @@ gh-vault env migrate --env-file .env
 
 ### Sync declared values to GitHub
 
-`secret sync` and `variable sync` are independent and each set only their own GitHub Actions store. `--prune` and `--migrate-types` are mutually exclusive on each command.
+`secret sync` and `variable sync` are independent and each set only their own GitHub Actions store in the selected repository or GitHub Environment scope. `--prune` and `--migrate-types` are mutually exclusive on each command.
 
 ```sh
 # Secret side: preview, set, migrate, prune
@@ -323,6 +340,7 @@ gh-vault secret sync
 gh-vault secret sync --migrate-types
 gh-vault secret sync --prune
 gh-vault secret sync --repo owner/repo
+gh-vault secret sync --env-file .env.production --github-environment production
 
 # Variable side: matching options for the Variables store
 gh-vault variable sync --dry-run
@@ -330,22 +348,25 @@ gh-vault variable sync
 gh-vault variable sync --migrate-types
 gh-vault variable sync --prune
 gh-vault variable sync --repo owner/repo
+gh-vault variable sync --env-file .env.production --github-environment production
 ```
 
-`secret sync` creates or updates only GitHub Secrets and never touches GitHub Variables. `variable sync` creates or updates only GitHub Variables and never touches GitHub Secrets. On either side, ordinary sync never deletes. `--migrate-types` resolves a type change in one direction only: `secret sync --migrate-types` removes a same-name GitHub Variable before setting the Secret, and `variable sync --migrate-types` removes a same-name GitHub Secret before setting the Variable. `--prune` removes remote values in the target store whose names are absent from the selected sync entries; only selected, nonempty values of the synced type protect a remote name. Opposite-type declarations, empty literals, and skipped reserved names do not protect names from pruning. `--dry-run` reports counts without remote mutation. With `--prune` or `--migrate-types`, it still lists remote names; profile-reference selection can still decrypt local tokens. Preview destructive operations using the same flags you intend to apply.
+`secret sync` creates or updates only GitHub Secrets and never touches GitHub Variables. `variable sync` creates or updates only GitHub Variables and never touches GitHub Secrets. On either side, ordinary sync never deletes. `--migrate-types` resolves a type change in one direction only: `secret sync --migrate-types` removes a same-name GitHub Variable before setting the Secret, and `variable sync --migrate-types` removes a same-name GitHub Secret before setting the Variable. `--prune` removes remote values in the selected repository or environment store whose names are absent from the selected sync entries; only selected, nonempty values of the synced type protect a remote name. Opposite-type declarations, empty literals, and skipped reserved names do not protect names from pruning. `--dry-run` reports counts without remote mutation. With `--prune` or `--migrate-types`, it still lists remote names; profile-reference selection can still decrypt local tokens. Preview destructive operations using the same flags you intend to apply.
 
 ### Check local declarations against GitHub
 
-`secret check` and `variable check` are independent and scoped to their own GitHub Actions type. Each one is nonzero-exit until every finding in its scope is resolved and never modifies `.env`.
+`secret check` and `variable check` are independent and scoped to their own GitHub Actions type plus the selected repository or GitHub Environment. Each one is nonzero-exit until every finding in its scope is resolved and never modifies `.env`.
 
 ```sh
 # Local secret declarations vs. GitHub Secrets only
 gh-vault secret check
 gh-vault secret check --repo owner/repo
+gh-vault secret check --env-file .env.production --github-environment production
 
 # Local variable declarations vs. GitHub Variables only
 gh-vault variable check
 gh-vault variable check --repo owner/repo
+gh-vault variable check --env-file .env.production --github-environment production
 ```
 
 `secret check` reports three categories, all nonzero-exit until resolved:
@@ -390,15 +411,16 @@ Changing a directive changes both archive storage and GitHub synchronization eli
 | `secret` | local-only | Remove the adjacent `secret` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote Secret remains. Before `secret sync --prune`, run the full pre-push review sequence above |
 | `variable` | local-only | Remove the adjacent `variable` directive | No gh-vault archive for that value | `gh-vault env archive` | Remote Variable remains. Before `variable sync --prune`, run the full pre-push review sequence above |
 
-### Import repository Variables into `.env`
+### Import GitHub Variables into `.env`
 
 ```sh
 gh-vault variable import
 gh-vault variable import --repo owner/repo
+gh-vault variable import --env-file .env.production --github-environment production
 gh-vault variable import --force    # overwrite existing variable declarations
 ```
 
-Reads repository variables via `gh variable list` and writes standard keys with `# gh-vault: variable` directives. Targets `.env` when it exists, otherwise writes commented assignments in `.env.example`. Existing entries are retained unless `--force` is supplied; force overwrites only an existing `variable` declaration and refuses to reclassify a secret or local-only key.
+Reads repository or environment-scoped variables via `gh variable list` and writes standard keys with `# gh-vault: variable` directives. Targets the selected `.env` file when it exists, otherwise writes commented assignments in its matching `.env.example` variant. Existing entries are retained unless `--force` is supplied; force overwrites only an existing `variable` declaration and refuses to reclassify a secret or local-only key.
 
 ### Run local Actions with ephemeral values
 

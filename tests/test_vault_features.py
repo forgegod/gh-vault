@@ -948,6 +948,112 @@ def test_remote_secret_status_identifies_secret_variable_type_drift(monkeypatch,
     ]
 
 
+def test_environment_scoped_status_preflights_and_lists_only_that_environment(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env.production"
+    env.write_text("# gh-vault: secret\nAPI_KEY=synthetic\n# gh-vault: variable\nREGION=eu-west-1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        return Result("API_KEY\n" if command[:3] == ["gh", "secret", "list"] else "REGION\n")
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert remote_secret_status(env, "owner/repo", environment="production") == RemoteValueStatus([], [], [], [], [], [])
+    assert calls == [
+        ["gh", "api", "repos/owner/repo/environments/production"],
+        ["gh", "secret", "list", "--repo", "owner/repo", "--env", "production", "--json", "name", "--jq", ".[].name"],
+        ["gh", "variable", "list", "--repo", "owner/repo", "--env", "production", "--json", "name", "--jq", ".[].name"],
+    ]
+
+
+def test_environment_preflight_uses_the_github_host_from_a_qualified_repository(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda command, **kwargs: calls.append(command) or Result())
+
+    assert sync([], "github.example/owner/repo", "secret", False, environment="release/2026") == SyncResult(0, 0)
+    assert calls == [["gh", "api", "repos/owner/repo/environments/release%2F2026", "--hostname", "github.example"]]
+
+
+def test_environment_preflight_failure_prevents_mutation(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 1
+        stderr = "HTTP 404: Not Found"
+        stdout = ""
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", lambda command, **kwargs: calls.append(command) or Result())
+
+    with pytest.raises(StoreError, match="cannot find GitHub environment 'production'"):
+        sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False, environment="production")
+    assert calls == [["gh", "api", "repos/owner/repo/environments/production"]]
+
+
+def test_environment_scoped_sync_preflights_and_migrates_only_that_environment(monkeypatch) -> None:
+    calls: list[tuple[list[str], str | None]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout: str = "") -> None:
+            self.stdout = stdout
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        input_value = kwargs.get("input")
+        calls.append((command, input_value if isinstance(input_value, str) else None))
+        return Result("API_KEY\n" if command[:3] == ["gh", "variable", "list"] else "")
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert sync([ActionValue("API_KEY", "secret", "alpha")], "owner/repo", "secret", False, migrate_types=True, environment="production") == SyncResult(1, 0)
+    assert calls == [
+        (["gh", "api", "repos/owner/repo/environments/production"], None),
+        (["gh", "secret", "list", "--repo", "owner/repo", "--env", "production", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "variable", "list", "--repo", "owner/repo", "--env", "production", "--json", "name", "--jq", ".[].name"], None),
+        (["gh", "variable", "delete", "API_KEY", "--repo", "owner/repo", "--env", "production"], None),
+        (["gh", "secret", "set", "API_KEY", "--repo", "owner/repo", "--env", "production"], "alpha"),
+    ]
+
+
+def test_environment_scoped_variable_import_preflights_and_uses_selected_source(monkeypatch, tmp_path: Path) -> None:
+    env = tmp_path / ".env.production"
+    env.write_text("# gh-vault: variable\nREGION=local\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stderr = ""
+        stdout = '[{"name":"REGION","value":"remote"}]'
+
+    def fake_run(command: list[str], **kwargs: object) -> Result:
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr("gh_vault.actions.subprocess.run", fake_run)
+
+    assert import_variables(tmp_path, "owner/repo", True, env_file=Path(".env.production"), environment="production") == (env, 1)
+    assert env.read_text(encoding="utf-8") == "# gh-vault: variable\nREGION=remote\n"
+    assert calls == [
+        ["gh", "api", "repos/owner/repo/environments/production"],
+        ["gh", "variable", "list", "--repo", "owner/repo", "--env", "production", "--json", "name,value"],
+    ]
+
+
 def test_sync_migrates_a_stale_opposite_type_without_argv_value(monkeypatch) -> None:
     calls: list[tuple[list[str], str | None]] = []
 

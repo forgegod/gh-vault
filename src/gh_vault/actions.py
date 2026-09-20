@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from .envfiles import DotenvAssignment, _parse_assignment, _write_private, example_file_for, format_dotenv_value, parse_typed_dotenv, project_namespace
 from .store import StoreError, VaultStore
@@ -83,9 +84,40 @@ def runtime_environment(env_file: Path, store: VaultStore) -> dict[str, str]:
     return environment
 
 
-def _remote_names(kind: str, repo: str) -> set[str]:
+def _scope_arguments(repo: str, environment: str | None) -> list[str]:
+    return ["--repo", repo, *(["--env", environment] if environment is not None else [])]
+
+
+def _environment_api_command(repo: str, environment: str) -> list[str]:
+    parts = repo.split("/")
+    if len(parts) == 2:
+        host: str | None = None
+        owner, name = parts
+    elif len(parts) == 3:
+        host, owner, name = parts
+    else:
+        raise StoreError(f"invalid GitHub repository for environment lookup: {repo}")
+    return ["gh", "api", f"repos/{owner}/{name}/environments/{quote(environment, safe='')}", *(["--hostname", host] if host is not None else [])]
+
+
+def _require_environment(repo: str, environment: str | None) -> None:
+    if environment is None:
+        return
+    if not environment:
+        raise StoreError("GitHub environment must not be empty")
     result = subprocess.run(
-        ["gh", kind, "list", "--repo", repo, "--json", "name", "--jq", ".[].name"],
+        _environment_api_command(repo, environment),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise StoreError(f"cannot find GitHub environment {environment!r}: {result.stderr.strip() or 'gh failed'}")
+
+
+def _remote_names(kind: str, repo: str, environment: str | None = None) -> set[str]:
+    result = subprocess.run(
+        ["gh", kind, "list", *_scope_arguments(repo, environment), "--json", "name", "--jq", ".[].name"],
         text=True,
         capture_output=True,
         check=False,
@@ -95,18 +127,21 @@ def _remote_names(kind: str, repo: str) -> set[str]:
     return {name for name in result.stdout.splitlines() if name}
 
 
-def import_variables(directory: Path, repo: str, force: bool) -> tuple[Path, int]:
-    target = directory / ".env"
+def import_variables(directory: Path, repo: str, force: bool, env_file: Path = Path(".env"), environment: str | None = None) -> tuple[Path, int]:
+    source = env_file if env_file.is_absolute() else directory / env_file
+    example = example_file_for(source)
+    target = source
     if not target.exists():
-        target = directory / ".env.example"
+        target = example
     template = target.name.startswith(".env.example")
     assignments = {entry.key: entry for entry in parse_typed_dotenv(target, include_commented=template)}
     try:
         source = target.read_text(encoding="utf-8")
     except OSError as exc:
         raise StoreError(f"cannot read {target}: {exc}") from exc
+    _require_environment(repo, environment)
     result = subprocess.run(
-        ["gh", "variable", "list", "--repo", repo, "--json", "name,value"],
+        ["gh", "variable", "list", *_scope_arguments(repo, environment), "--json", "name,value"],
         text=True,
         capture_output=True,
         check=False,
@@ -153,12 +188,13 @@ def _render_imported_variables(source: str, assignments: dict[str, DotenvAssignm
     return "\n".join(lines) + "\n"
 
 
-def remote_secret_status(env_file: Path, repo: str) -> RemoteValueStatus:
+def remote_secret_status(env_file: Path, repo: str, environment: str | None = None) -> RemoteValueStatus:
     assignments = parse_typed_dotenv(env_file)
     local = {entry.key for entry in assignments if entry.kind == "secret" and not RESERVED.fullmatch(entry.key)}
     local_variables = {entry.key for entry in assignments if entry.kind == "variable" and not RESERVED.fullmatch(entry.key)}
-    remote_secrets = _remote_names("secret", repo)
-    remote_variables = _remote_names("variable", repo)
+    _require_environment(repo, environment)
+    remote_secrets = _remote_names("secret", repo, environment)
+    remote_variables = _remote_names("variable", repo, environment)
     return RemoteValueStatus(
         sorted(local - remote_secrets - remote_variables),
         sorted(local_variables - remote_variables - remote_secrets),
@@ -176,6 +212,7 @@ def sync(
     dry_run: bool,
     migrate_types: bool = False,
     prune: bool = False,
+    environment: str | None = None,
 ) -> SyncResult:
     if migrate_types and prune:
         raise StoreError("--migrate-types and --prune cannot be combined")
@@ -183,8 +220,9 @@ def sync(
     if mismatched:
         names = ", ".join(sorted(entry.name for entry in mismatched))
         raise StoreError(f"{kind} sync received entries with other kinds: {names}")
-    remote_target = _remote_names(kind, repo) if migrate_types or prune else set()
-    remote_opposite = _remote_names("variable" if kind == "secret" else "secret", repo) if migrate_types else set()
+    _require_environment(repo, environment)
+    remote_target = _remote_names(kind, repo, environment) if migrate_types or prune else set()
+    remote_opposite = _remote_names("variable" if kind == "secret" else "secret", repo, environment) if migrate_types else set()
     prune_names: list[str] = []
     if prune:
         local_names = {entry.name for entry in entries}
@@ -192,7 +230,7 @@ def sync(
         for name in prune_names:
             if not dry_run:
                 result = subprocess.run(
-                    ["gh", kind, "delete" if kind == "variable" else "remove", name, "--repo", repo],
+                    ["gh", kind, "delete" if kind == "variable" else "remove", name, *_scope_arguments(repo, environment)],
                     text=True,
                     capture_output=True,
                     check=False,
@@ -203,14 +241,14 @@ def sync(
         if migrate_types and entry.name in remote_opposite and not dry_run:
             opposite = "variable" if kind == "secret" else "secret"
             result = subprocess.run(
-                ["gh", opposite, "delete" if opposite == "variable" else "remove", entry.name, "--repo", repo],
+                ["gh", opposite, "delete" if opposite == "variable" else "remove", entry.name, *_scope_arguments(repo, environment)],
                 text=True,
                 capture_output=True,
                 check=False,
             )
             if result.returncode:
                 raise StoreError(f"cannot migrate '{entry.name}': failed to remove stale {opposite}: {result.stderr.strip() or 'gh failed'}")
-        command = ["gh", kind, "set", entry.name, "--repo", repo]
+        command = ["gh", kind, "set", entry.name, *_scope_arguments(repo, environment)]
         if not dry_run:
             result = subprocess.run(command, input=entry.value, text=True, capture_output=True, check=False)
             if result.returncode:

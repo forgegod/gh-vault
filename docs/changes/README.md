@@ -75,6 +75,7 @@ No change record is active.
 
 - [CHG-001 — Adopt source-backed maintenance records](archive/CHG-001-maintenance-adoption.md) — done; source-backed adoption and local verification receipt.
 - [CHG-002 — Install the short console command](archive/CHG-002-local-console-command.md) — done; `gh-vault` console-script installation while retaining the `forgegod-gh-vault` distribution.
+- [CHG-003 — Environment-scoped GitHub Actions values](archive/CHG-003-environment-scoped-actions-values.md) — done; explicit repository or GitHub Environment scope for remote Actions values.
 
 Create `active/` or `archive/` when the first real record belongs there; do not
 add placeholder files. Baseline capability documentation is not a historical

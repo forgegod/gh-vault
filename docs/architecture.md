@@ -39,9 +39,12 @@ not a blanket catch for every OS error or malformed input.
    Public variables and a value-free index live under the XDG config root;
    secrets and eligible raw templates live in `pass`. Payloads are verified
    before stale values are removed; there is no cross-store transaction.
-4. Actions sync hands selected values to `gh` on stdin. Check operations compare
-   remote names/types, not secret values. `--migrate-types` and `--prune` are
-   explicit destructive modes; their selection boundary is detailed in CAP-006.
+4. Actions sync hands selected values to `gh` on stdin. Remote operations default
+   to repository scope or use an explicit `--github-environment` target after a
+   read-only environment preflight. Check operations compare remote names/types,
+   not secret values. `--migrate-types` and `--prune` are explicit destructive
+   modes confined to that selected scope; their selection boundary is detailed in
+   CAP-006.
 5. `run-act` manages private temporary files for literal typed values and waits
    for the child. Persistent export supports vault references; ephemeral runs
    reject them. Workflow check is a local line-based reference scanner.

@@ -26,6 +26,16 @@ metadata rejects a mismatched payload. The same repository reached through a
 different URL spelling can share the namespace but still fail the origin check;
 normalization does not authorize rewriting stored origin metadata.
 
+## Keep GitHub deployment scope explicit
+
+Repository-scoped Actions values remain the default. A GitHub Environment is
+selected only by `--github-environment`, never inferred from a local dotenv
+profile or encoded in a value directive. This keeps local archive identity and
+remote deployment policy separate, makes destructive scope visible at the
+command boundary, and permits GitHub Environment names outside the local profile
+grammar. Environment-targeted operations verify the target exists but do not
+create or configure deployment policy.
+
 ## Make credential delivery explicit
 
 Child-only environments, stdin for external tool writes, and narrowly named

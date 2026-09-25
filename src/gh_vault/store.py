@@ -12,6 +12,7 @@ from typing import Any
 STORE_PREFIX = "gh-vault"
 ENVIRONMENT_INDEX_VERSION = 1
 VARIABLE_PAYLOAD_VERSION = 1
+PUBLICATION_METADATA_VERSION = 1
 PROFILE_NAME = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
 NAMESPACE_PART = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -334,6 +335,130 @@ class EnvironmentStore:
         if not isinstance(data, dict):
             raise StoreError(f"{label} has invalid data")
         return data
+
+
+class ActionsPublicationStore(EnvironmentStore):
+    def __init__(self, config_dir: Path | None = None) -> None:
+        super().__init__(config_dir)
+        self.root = self.config_dir / "publications"
+
+    def save(
+        self,
+        namespace: str,
+        profile: str,
+        origin: str,
+        metadata: dict[str, Any],
+    ) -> Path:
+        self._require_profile(profile)
+        self._require_origin(origin)
+        payload = {
+            "version": PUBLICATION_METADATA_VERSION,
+            "origin": origin,
+            **metadata,
+        }
+        self._validate_publication(payload)
+        path = self._publication_path(namespace, profile)
+        _write_restrictive_json(self.config_dir, path, payload)
+        return path
+
+    def load(
+        self,
+        namespace: str,
+        profile: str,
+        origin: str,
+    ) -> dict[str, Any] | None:
+        self._require_profile(profile)
+        self._require_origin(origin)
+        payload = self._load_json(
+            self._publication_path(namespace, profile),
+            "Actions publication metadata",
+        )
+        if payload is None:
+            return None
+        self._validate_publication(payload)
+        if payload["origin"] != origin:
+            raise StoreError("Actions publication metadata does not match this origin")
+        return payload
+
+    def _publication_path(self, namespace: str, profile: str) -> Path:
+        name = "env.standby.json" if profile == "default" else f"env.{profile}.standby.json"
+        return self._namespace_dir(namespace) / name
+
+    @staticmethod
+    def _validate_publication(payload: dict[str, Any]) -> None:
+        expected = {
+            "version",
+            "origin",
+            "attempted_at",
+            "connection",
+            "project_id",
+            "source_profile",
+            "destination",
+            "status",
+            "failed_key",
+            "entries",
+        }
+        destination = payload.get("destination")
+        entries = payload.get("entries")
+        if (
+            set(payload) != expected
+            or payload.get("version") != PUBLICATION_METADATA_VERSION
+            or not all(
+                isinstance(payload.get(field), str) and payload[field]
+                for field in (
+                    "origin",
+                    "attempted_at",
+                    "connection",
+                    "project_id",
+                    "source_profile",
+                    "status",
+                )
+            )
+            or payload["status"] not in {"success", "failure"}
+            or not isinstance(destination, dict)
+            or set(destination) != {"repo", "environment"}
+            or not isinstance(destination.get("repo"), str)
+            or not destination["repo"]
+            or not (
+                destination["environment"] is None
+                or isinstance(destination["environment"], str)
+                and destination["environment"]
+            )
+            or not (
+                payload["failed_key"] is None
+                or isinstance(payload["failed_key"], str)
+                and payload["failed_key"]
+            )
+            or not isinstance(entries, list)
+        ):
+            raise StoreError("Actions publication metadata has invalid data")
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or set(entry)
+                != {
+                    "name",
+                    "kind",
+                    "source_id",
+                    "operation",
+                    "result",
+                    "remote_revision",
+                }
+                or not all(
+                    isinstance(entry.get(field), str) and entry[field]
+                    for field in ("name", "kind", "source_id", "operation", "result")
+                )
+                or entry["kind"] not in {"secret", "variable"}
+                or entry["operation"] not in {"create", "update"}
+                or entry["result"]
+                not in {"value-verified", "name-type-verified", "failed"}
+                or not (
+                    entry["remote_revision"] is None
+                    or isinstance(entry["remote_revision"], str)
+                    and entry["remote_revision"]
+                )
+            ):
+                raise StoreError("Actions publication metadata has invalid data")
 
 
 def _write_restrictive_json(config_dir: Path, path: Path, data: dict[str, Any]) -> None:

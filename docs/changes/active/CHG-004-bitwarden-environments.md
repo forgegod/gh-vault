@@ -20,16 +20,17 @@ storage, and an explicit project ID for the initial scope instead of incomplete
 project-name listing or a mandatory repository TOML binding file.
 
 This record is the sole phased plan, not a claim of fully implemented support.
-Phases 1–4 are complete at verified checkpoints. Later phases remain pending,
+Phases 1–5 are complete at verified checkpoints. Later phases remain pending,
 and the record is blocked between phases until another execution cycle is
 selected. No commit, push, release, live credential access, or remote write is
 authorized by this plan.
 
 The operator explicitly approved the narrow Bitwarden extension and local-path
-split in Phase 1. Phases 2–4 implement connection metadata, optional encrypted
+split in Phase 1. Phases 2–5 implement connection metadata, optional encrypted
 credential storage, the explicit local loader, project/result validation,
-fresh-clone dotenv recovery, and previewed explicit upload through a compatible
-adapter. Actions delivery remains unimplemented.
+fresh-clone dotenv recovery, previewed explicit upload, and reviewed GitHub
+standby publication through a compatible adapter. Dual-provider workflow
+delivery remains unimplemented.
 
 ## SDK license boundary
 
@@ -67,27 +68,25 @@ That proposal is not adoptable as stated.
   name only the interface a substitute must satisfy: inputs, outputs, and
   value-free errors.
 
-Approved implementation boundary, not current product behavior until its code,
-tests, and contracts land:
+Approved implementation boundary:
 
-- This repository may later define an interface and a non-functional mock. No
+- This repository defines an interface and a non-functional mock. No
   SDK dependency, import, source, binary, or call recipe.
 - The organization that holds the paid license keeps the private module in the
   sibling checkout `../gh-vault-bws`, linked to the private repository
   `https://github.com/forgegod/gh-vault-bws`. Its build contract is that
-  repository's `docs/specification.md`. A future gh-vault build may load that
-  module only from a local path the operator already has. The operator updates
+  repository's `docs/specification.md`. gh-vault loads that module only from a
+  local path the operator already has. The operator updates
   that checkout. gh-vault does not fetch it.
 - Do not add this repository as a git submodule of gh-vault. A submodule is a
   fetch path in the published tree and is not required for simultaneous edits
   of the sibling checkouts.
-- Phases 2 and later must follow this split. SDK calls, including authentication,
-  project listing, secret reads, creates, and updates, are implemented in
+- SDK calls, including authentication, project listing, secret reads, creates,
+  and updates, are implemented in
   `../gh-vault-bws` against that repository's `docs/specification.md` and its own
   change record. Do not implement those calls in this repository. Phases below
   that say "adapter" mean the local-path loader or mock in
-  `src/gh_vault/bitwarden.py`, which delegates to the loaded module. Do not
-  implement them before Phase 2 begins from a verified Phase 1 checkpoint.
+  `src/gh_vault/bitwarden.py`, which delegates to the loaded module.
 
 ## Concept to carry forward
 
@@ -229,7 +228,7 @@ DOX, README/security contracts where applicable, and this record together.
 | 2 | Operator connection and project discovery | done (143 focused tests; record validation; `make verify`: 238 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0 |
 | 3 | Fresh-clone dotenv recovery | done (102 focused tests; `make verify`: 256 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py` exits 0; `make records-check` exits 0 |
 | 4 | Explicit upload to Bitwarden | done (55 focused tests; `make verify`: 275 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
-| 5 | Publish GitHub standby values | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
+| 5 | Publish GitHub standby values | done (206 focused tests; record validation; `make verify`: 287 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
 | 6 | Dual-provider Actions and offline diagnostics | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
 | 7 | Integrate recovery evidence and current-state records | pending | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
 
@@ -435,6 +434,21 @@ implementation, remote write, commit, or push occurred.
 
 **Verification gate:** `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0.
 
+**Completion evidence:** `bitwarden actions publish` derives typed names from one
+explicit template, reads exact entries and IDs through the selected local adapter,
+and requires an explicit GitHub repository plus optional Environment. Preview is
+the default; `--apply` performs stdin-only create/update calls after empty-value
+and type-drift checks. Applied Variables require exact name/value read-back;
+Secrets require same-scope name/type presence. Child diagnostics are discarded,
+partial failures remain explicit, and restrictive origin-bound metadata records
+scope, source IDs, remote revisions, time, and per-key results without values or
+hashes. Synthetic tests cover repository/Environment isolation, no deletion or
+selector mutation, Bitwarden-token removal from every `gh` child environment,
+hostile diagnostics, adapter cleanup, partial failure, and verification mismatch.
+The focused gate passes (206 tests), and `make records-check` plus `make verify`
+pass (287 Python tests and 82 Node tests).
+No live Bitwarden/GitHub call, remote write, commit, or push occurred.
+
 ## Phase 6 — Dual-provider Actions and offline diagnostics
 
 **Goal:** Supply one application contract from either provider without hidden fallback.
@@ -514,11 +528,12 @@ Bitwarden delivery and independent GitHub rollback.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phases 1–4 complete and three later rows pending.
-CAP-001–CAP-004, root/child DOX, README, architecture, security, and design
-decisions describe the implemented local connection, project, and environment
-recovery/upload boundary. They do not claim Actions delivery, live service
-behavior, or SDK implementation in this repository.
+package. The phase table records Phases 1–5 complete and two later rows pending.
+CAP-001–CAP-004 and CAP-006, root/child DOX, README, architecture, security, and
+design decisions describe the implemented local connection, project,
+environment recovery/upload, and GitHub standby publication boundaries. They do
+not claim dual-provider workflow delivery, live service behavior, rollback
+readiness, or SDK implementation in this repository.
 
 Public references inform the concept; recheck supported versions in Phase 1:
 
@@ -531,5 +546,5 @@ Public references inform the concept; recheck supported versions in Phase 1:
 
 Resume with the repository-local
 [phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Phase 4 is complete and the record is blocked between phases;
-select Phase 5 in a new execution cycle before changing its implementation scope.
+and this record. Phase 5 is complete and the record is blocked between phases;
+select Phase 6 in a new execution cycle before changing its implementation scope.

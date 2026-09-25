@@ -4,7 +4,8 @@
 
 gh-vault is a Linux-oriented Python 3.10+ command-line application for named
 GitHub tokens, typed project environments, Actions values, workflow wiring, and
-explicit Bitwarden project access through an operator-held local adapter.
+explicit Bitwarden project access and standby publication through an
+operator-held local adapter.
 The `forgegod-gh-vault` distribution installs the `gh-vault` executable;
 `python -m gh_vault` delegates to the same dispatcher. Argparse displays the
 same product label. The package has no declared third-party Python runtime
@@ -20,11 +21,11 @@ executable evidence. [README](../README.md) is the operator command guide;
 | Module | Responsibility | External boundary |
 | --- | --- | --- |
 | `src/gh_vault/cli.py` | Argparse commands, dispatch, output, exit handling, process handoff | TTY/stdin, stdout/stderr, exec |
-| `src/gh_vault/store.py` | Token metadata, vault backend, public environment store | `pass`, restrictive JSON files |
+| `src/gh_vault/store.py` | Token metadata, vault backend, public environment store, value-free standby metadata | `pass`, restrictive JSON files |
 | `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project/environment inspection, read, and verified write-result validation | Operator bws config and local `gh_vault_bws` checkout |
 | `src/gh_vault/github.py` | Token scope/expiration inspection | HTTPS GET to GitHub user API |
 | `src/gh_vault/envfiles.py` | Dotenv syntax, origin identity, archive/restore/migration | Git origin lookup, explicit file inputs |
-| `src/gh_vault/actions.py` | Actions selection, sync/check/import, act execution, workflow scanning | `gh`, act child, local workflow files |
+| `src/gh_vault/actions.py` | Actions selection, sync/check/import, verified standby publication, act execution, workflow scanning | `gh`, act child, local workflow files |
 
 `StoreError` is the shared application error boundary. The main CLI converts it
 to an argparse error; direct helper tests assert the exception instead. This is
@@ -57,7 +58,11 @@ not a blanket catch for every OS error or malformed input.
    read-only environment preflight. Check operations compare remote names/types,
    not secret values. `--migrate-types` and `--prune` are explicit destructive
    modes confined to that selected scope; their selection boundary is detailed in
-   CAP-006.
+   CAP-006. Bitwarden standby publication instead requires an explicit repository,
+   reads exact typed entries from the selected project, rejects empty values and
+   type drift, and previews before `--apply`. Applied Variables are read back by
+   exact name/value; Secrets are verified only by same-scope name/type presence.
+   It never deletes, migrates types, or changes workflow provider selection.
 6. `run-act` manages private temporary files for literal typed values and waits
    for the child. Persistent export supports vault references; ephemeral runs
    reject them. Workflow check is a local line-based reference scanner.
@@ -68,6 +73,7 @@ not a blanket catch for every OS error or malformed input.
 | Tokens | `pass`: `gh-vault/<profile>` | Encrypted backend; single-line token |
 | Bitwarden connections | XDG `gh-vault/config.json` | bws config/profile, resolved endpoint pair, expected organization UUID |
 | Bitwarden access tokens | `pass`: `gh-vault/bitwarden/<connection>` or selected `BWS_ACCESS_TOKEN` | Separate credential source with no fallback |
+| Standby publication metadata | XDG `gh-vault/publications/<host>/<path>/env[.<profile>].standby.json` | Version 1, exact source origin, destination scope, source IDs, remote revisions, and value-free per-key results |
 | Public variables | XDG `gh-vault/environments/<host>/<path>/env[.<profile>].variables.json` | Version 1, exact origin, string values |
 | Environment index | Same directory, `environments.json` | Version 1, origin, per-profile boolean presence fields |
 | Archived secrets | `pass`: `gh-vault/projects/<host>/<path>/env[.<profile>].secrets.json` | Version 3, origin, string values |

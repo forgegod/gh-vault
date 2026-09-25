@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Production package for storing named GitHub tokens and project environment archives through `pass`, selecting an active profile, syncing Actions values, supplying a selected token to consumers, and resolving, restoring, or explicitly uploading declared Bitwarden environment values through an operator-held local adapter.
+Production package for storing named GitHub tokens and project environment archives through `pass`, selecting an active profile, syncing Actions values, supplying a selected token to consumers, and resolving, restoring, explicitly uploading, or publishing declared Bitwarden environment values through an operator-held local adapter.
 
 ## Ownership
 
@@ -10,12 +10,12 @@ Production package for storing named GitHub tokens and project environment archi
 |---|---|
 | `__init__.py` | Package identity and runtime version. |
 | `__main__.py` | Module entry point delegating to the CLI. |
-| `cli.py` | Command dispatch for profiles, archives, explicit migrations, Actions sync, workflow checks, child-process injection, and Git credential helper. |
-| `store.py` | Profile metadata, restrictive config and public environment persistence, `pass` integration, and backend errors. |
+| `cli.py` | Command dispatch for profiles, archives, explicit migrations, Actions sync/standby publication, workflow checks, child-process injection, and Git credential helper. |
+| `store.py` | Profile metadata, restrictive config, public environment and value-free publication persistence, `pass` integration, and backend errors. |
 | `bitwarden.py` | Named bws-profile endpoint resolution, explicit local adapter loading, and value-free project/environment inspection, read, and write-result validation. |
-| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive migration, public inspection, reconstruction, Bitwarden upload preflight, and atomic Bitwarden restore. |
+| `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive migration, public inspection, reconstruction, Bitwarden upload/Actions preflight, and atomic Bitwarden restore. |
 | `github.py` | GitHub token metadata inspection without exposing token values. |
-| `actions.py` | GitHub Actions value selection, explicit legacy declaration migration, remote-variable import, `gh` sync, persistent exports, ephemeral `act` execution, and workflow references. |
+| `actions.py` | GitHub Actions value selection, explicit legacy declaration migration, remote-variable import, `gh` sync, verified Bitwarden standby publication, persistent exports, ephemeral `act` execution, and workflow references. |
 
 ## Local Contracts
 
@@ -32,8 +32,9 @@ Production package for storing named GitHub tokens and project environment archi
 - `bitwarden env restore` preflights the selected `.env.example` before credential access, requires every typed declaration by exact name, rejects profile references, and sends no local-only keys to the adapter. The adapter returns structured entry IDs, values, organization, and project membership for validation; missing, duplicate, extra, NUL-bearing, or scope-mismatched entries fail before the target changes.
 - Bitwarden restore refuses an existing target without `--force`, comments active local-only template assignments, preserves comments/directives and present-empty values, quotes literal `@file:` / `@base64:` values, and replaces the target atomically from a mode-`0600` adjacent file. It never falls back to local archives or restores template transport paths.
 - `bitwarden env upload` parses one explicit `.env` and verifies the adapter operations required by preview/apply before credential access. It resolves explicit `@file:` / `@base64:` transport values, rejects profile references and NUL, and excludes local-only assignments. Its default is a value-free exact-name preview. `--apply` creates missing entries; existing entries remain unchanged unless `--update-existing` is also selected. Every applied batch must return exact read-back IDs, names, values, organization, project membership, and operations for in-process verification. Failure never claims a transaction or completed upload, and no path deletes remote entries.
+- `bitwarden actions publish` derives typed keys from one explicit template, reads exact entries from one Bitwarden project, and requires an explicit GitHub repository plus optional `--github-environment`. Preview is the default; `--apply` creates or updates without prune/type migration. Empty values and opposite-type targets fail before writes. Values reach `gh` only on stdin; child diagnostics are discarded and all BWS credential/config variables are removed from the `gh` child environment. Variables require exact value read-back, Secrets require same-scope name/type presence, and restrictive metadata records source IDs, remote revisions, scope, time, and per-key results without values or hashes.
 - The public package never imports the Bitwarden SDK, fetches the private adapter, lists projects by name, or creates projects. It loads `gh_vault_bws` only from the operator-supplied local directory and removes that module after the request.
-- `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; every directory is mode `0700`, every JSON file is mode `0600`, and payload/index schemas remain separate and origin-bound.
+- `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; `ActionsPublicationStore` keeps value-free standby results below the matching `publications/` namespace. Every directory is mode `0700`, every JSON file is mode `0600`, and schemas remain separate and origin-bound.
 - The first set profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
 - `find --stdin` reads one candidate token from standard input, compares it against every configured profile inside the process, prints only matching profile names, exits `0` when at least one profile matches, and exits `1` silently when none match. Empty or multiline candidates are rejected and token values never appear in output or errors.
 - `output [--name PROFILE]` intentionally prints only the selected token plus one trailing newline so callers can pipe it to a credential consumer such as `docker login --password-stdin`; it emits no labels or metadata.

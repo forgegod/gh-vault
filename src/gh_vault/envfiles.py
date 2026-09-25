@@ -51,6 +51,12 @@ class BitwardenUploadPlan:
     entries: tuple[DotenvAssignment, ...]
 
 
+@dataclass(frozen=True)
+class BitwardenActionsPlan:
+    profile: str
+    entries: tuple[DotenvAssignment, ...]
+
+
 def project_namespace(directory: Path) -> tuple[str, str]:
     result = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=directory, text=True, capture_output=True, check=False)
     origin = result.stdout.strip()
@@ -341,6 +347,30 @@ def prepare_bitwarden_upload(env_file: Path) -> BitwardenUploadPlan:
     if not managed:
         raise StoreError(f"Bitwarden upload source has no managed declarations: {env_file}")
     return BitwardenUploadPlan(env_file, managed)
+
+
+def prepare_bitwarden_actions(
+    env_file: Path,
+    example_file: Path,
+) -> BitwardenActionsPlan:
+    profile = environment_profile(env_file)
+    assignments = parse_typed_dotenv(
+        example_file,
+        include_commented=True,
+        resolve_transport=False,
+    )
+    managed = tuple(entry for entry in assignments if entry.kind != "local")
+    for entry in managed:
+        if entry.profile is not None:
+            raise StoreError(
+                f"{entry.key} at {example_file}:{entry.line} references vault profile "
+                f"'{entry.profile}'; profile references cannot be published to GitHub"
+            )
+    if not managed:
+        raise StoreError(
+            f"Bitwarden Actions template has no managed declarations: {example_file}"
+        )
+    return BitwardenActionsPlan(profile, managed)
 
 
 def archive_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> str:

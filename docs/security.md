@@ -24,6 +24,7 @@ review assets, or fixtures.
 | Typed variable | Public XDG JSON, selected Bitwarden project, in-process adapter request/response, selected child, GitHub Variables, public show/restore/export | Classify it as safe for plaintext first |
 | Local-only assignment | Input file and any independently inherited environment | Not included in archive value payloads or injected from dotenv |
 | Profile metadata/index | Restrictive local JSON | Names, notes, paths, and metadata are not encrypted; do not put secrets there |
+| Standby publication metadata | Restrictive XDG JSON below `gh-vault/publications/` | Contains scope, source IDs, timestamps/revisions, and results only; it is not value evidence or rollback authorization |
 | Eligible template | Raw encrypted template, explicit restore | Keep example files free of real/local-only values; raw text is preserved |
 
 Only `output` and an eligible `git-credential get` response deliberately emit
@@ -51,6 +52,16 @@ exact operation, ID, name, value, organization, and project membership from
 read-back before claiming success. The adapter remains trusted same-user code,
 not a sandbox.
 
+Bitwarden standby publication passes resolved values to `gh secret set` or
+`gh variable set` only on stdin. It discards all `gh` stderr rather than relaying
+potentially credential-bearing diagnostics and removes `BWS_ACCESS_TOKEN` plus
+all bws configuration/profile override variables from every `gh` child while
+preserving ambient GitHub authentication. Before writing, it rejects empty values
+and same-name opposite-type targets. After each write it reads the exact Variable
+name/value or confirms Secret name/type presence in the same scope. GitHub does
+not return Secret contents, so neither success output nor metadata claims Secret
+equality, credential validity, or rollback readiness.
+
 ## Filesystem guarantees and limits
 
 - Config, public payload, and index JSON writes create/chmod private directories
@@ -63,6 +74,9 @@ not a sandbox.
 - Bitwarden dotenv recovery writes and fsyncs a mode-`0600` adjacent temporary
   file before atomic replacement. Validation and retrieval failures leave an old
   target intact; this is per-file replacement, not a remote/local transaction.
+- Standby publication metadata uses mode-`0700` directories and atomic mode-`0600`
+  JSON replacement. It contains no values or value hashes and records only the
+  latest attempt for one local dotenv profile.
 - Restore/import and persistent act export use write-then-chmod and finish with
   `0600`; they do not guarantee private mode from the first byte on a newly
   created file. Use private directories and a restrictive umask. Symlink/race

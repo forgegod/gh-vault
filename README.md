@@ -364,6 +364,59 @@ multiline values, rejects NUL, and quotes literal values beginning `@file:` or
 `--force` and atomically installs a mode-`0600` file. There is no local-archive
 fallback or cached UUID mapping.
 
+### Publish reviewed GitHub standby values
+
+`bitwarden actions publish` reads typed names from the selected `.env.example`
+template and retrieves their exact values and entry IDs from one Bitwarden
+project. It requires an explicit destination repository; a named local dotenv
+profile never selects a GitHub Environment.
+
+```sh
+# Value-free create/update preview; GitHub is read but not modified.
+gh-vault bitwarden actions publish \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws \
+  --repo owner/repo
+
+# Apply the reviewed repository-scoped refresh.
+gh-vault bitwarden actions publish \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws \
+  --repo owner/repo \
+  --apply
+
+# Publish a named template into one existing GitHub Environment.
+gh-vault bitwarden actions publish \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws \
+  --credential-source vault \
+  --env-file .env.production \
+  --repo owner/repo \
+  --github-environment production \
+  --apply
+```
+
+The command excludes local-only and reserved Actions names, rejects profile
+references and empty managed values, and refuses same-name opposite-type GitHub
+targets. It never prunes, migrates types, deletes values, changes a workflow
+selector, or writes a plaintext dotenv. Values reach `gh` only through stdin;
+child diagnostics are not relayed, and the Bitwarden token/config variables are
+removed from every `gh` child environment. Variables are read back by exact
+name/value. Secrets can be checked only for name/type presence because GitHub
+does not return their contents.
+
+After `--apply`, gh-vault writes the latest value-free result below
+`${XDG_CONFIG_HOME:-~/.config}/gh-vault/publications/<source-origin>/` with mode
+`0600`. It records the Bitwarden entry IDs, destination, attempt time, GitHub
+revisions, operations, and verification limits, never values or value hashes.
+This metadata is not rollback proof. For a rotation, preview and apply the
+refresh, run a safe workflow or authentication probe against the GitHub-backed
+configuration, and only then treat the standby copy as usable. Keep the previous
+working values until that probe succeeds.
+
 ## Project environment archive
 
 Archives split typed `.env` and `.env.<profile>` declarations by sensitivity under the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`): `variable` values use restrictive JSON below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/`, while `secret` values remain encrypted in `pass`. Unmarked local values are never archived. Templates are encrypted only for profiles containing secrets.

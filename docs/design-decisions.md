@@ -70,6 +70,16 @@ selects updates. The public boundary validates normalized read-back data but kee
 SDK calls in the private adapter. No delete, automatic synchronization, or
 cross-entry transaction is implied.
 
+GitHub standby publication is another explicit directional operation, not a
+backend switch. It derives types from the selected template, resolves values and
+source IDs through the same local adapter boundary, and requires an explicit
+repository plus optional GitHub Environment. Preview is the default and `--apply`
+authorizes create/update only. Variables require exact read-back; Secret evidence
+is limited to name/type and remote revision because GitHub does not expose Secret
+contents. Value-free local metadata supports review but cannot establish
+credential validity or rollback readiness, so a safe consumer probe remains an
+operator step.
+
 ## Separate current behavior, progress, and rationale
 
 CAPs state behavior with executable evidence. An active CHG carries material

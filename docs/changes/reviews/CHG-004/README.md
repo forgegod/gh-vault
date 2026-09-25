@@ -4,8 +4,8 @@
 **Owner:** [CHG-004](../../active/CHG-004-bitwarden-environments.md)
 
 This package contains upstream findings and a proposed contract, not implemented
-behavior or a second progress tracker. The owner's Phase 1 records approval and
-remaining work. Current CAPs and architecture are unchanged.
+behavior or a second progress tracker. The owning CHG records progress; current
+implemented behavior belongs to the affected CAPs and architecture contracts.
 
 ## Approved license and loading boundary
 

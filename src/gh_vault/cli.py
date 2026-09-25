@@ -5,15 +5,16 @@ import getpass
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlparse
 
-from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, remote_secret_status, run_act, runtime_environment, suggested_env, sync
-from .bitwarden import BitwardenWrite, assert_connection_current, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, reject_bws_overrides, resolve_project, write_environment
-from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
+from .actions import RESERVED, StandbyPublicationError, StandbyPublicationResult, StandbyValue, action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, publish_standby, remote_secret_status, run_act, runtime_environment, suggested_env, sync
+from .bitwarden import BitwardenWrite, assert_connection_current, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_project, write_environment
+from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_actions, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
-from .store import BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
+from .store import ActionsPublicationStore, BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
 PROFILE_NAME_ERROR = "must be 1-64 characters; first character must be a letter or digit, the rest may be letters, digits, dot, underscore, or hyphen"
@@ -56,6 +57,17 @@ def parse_scopes(value: str) -> tuple[str, ...]:
 def github_environment(value: str) -> str:
     if not value:
         raise argparse.ArgumentTypeError("GitHub environment must not be empty")
+    return value
+
+
+def github_repo(value: str) -> str:
+    parts = value.split("/")
+    if len(parts) not in {2, 3} or any(
+        not re.fullmatch(r"[A-Za-z0-9._-]+", part) for part in parts
+    ):
+        raise argparse.ArgumentTypeError(
+            "repository must be owner/repo or host/owner/repo"
+        )
     return value
 
 
@@ -111,6 +123,17 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_upload.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to upload")
     bitwarden_upload.add_argument("--apply", action="store_true", help="perform the previewed creates and selected updates")
     bitwarden_upload.add_argument("--update-existing", action="store_true", help="include exact-name existing entries as updates in the preview or apply")
+    bitwarden_actions = bitwarden.add_parser("actions", help="publish reviewed GitHub standby values", description="Preview or explicitly publish declared exact-name Bitwarden values to GitHub Secrets and Variables.").add_subparsers(dest="bitwarden_actions_command", required=True)
+    bitwarden_publish = bitwarden_actions.add_parser("publish", help="publish GitHub standby values", description="Read declared values from one Bitwarden project and preview or publish them to one explicit GitHub repository or Environment.")
+    bitwarden_publish.add_argument("--connection", type=profile_name, required=True, help="configured connection name")
+    bitwarden_publish.add_argument("--project-id", type=project_uuid, required=True, help="canonical Bitwarden project UUID")
+    bitwarden_publish.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_publish.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bitwarden_publish.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> selecting the matching declaration template")
+    bitwarden_publish.add_argument("--example-file", type=Path, help="declaration template; defaults to the matching .env.example variant")
+    bitwarden_publish.add_argument("--repo", type=github_repo, required=True, help="explicit destination repository as owner/repo or host/owner/repo")
+    bitwarden_publish.add_argument("--github-environment", type=github_environment, help="target GitHub Environment; defaults to repository scope")
+    bitwarden_publish.add_argument("--apply", action="store_true", help="perform the previewed creates and updates")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
@@ -189,6 +212,137 @@ def _selected_bitwarden_token(args: argparse.Namespace, store: VaultStore) -> st
     return access_token
 
 
+def _publication_time() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _publication_metadata(
+    args: argparse.Namespace,
+    profile: str,
+    result: StandbyPublicationResult,
+) -> dict[str, object]:
+    return {
+        "attempted_at": _publication_time(),
+        "connection": args.connection,
+        "project_id": args.project_id,
+        "source_profile": profile,
+        "destination": {
+            "repo": args.repo,
+            "environment": args.github_environment,
+        },
+        "status": result.status,
+        "failed_key": result.failed_name,
+        "entries": [
+            {
+                "name": entry.name,
+                "kind": entry.kind,
+                "source_id": entry.source_id,
+                "operation": entry.operation,
+                "result": entry.result,
+                "remote_revision": entry.remote_revision,
+            }
+            for entry in result.entries
+        ],
+    }
+
+
+def _bitwarden_actions_publish(
+    args: argparse.Namespace,
+    store: VaultStore,
+    directory: Path,
+) -> int:
+    example_file = args.example_file or example_file_for(args.env_file)
+    plan = prepare_bitwarden_actions(args.env_file, example_file)
+    assignments = tuple(
+        entry for entry in plan.entries if not RESERVED.fullmatch(entry.key)
+    )
+    if not assignments:
+        raise StoreError("Bitwarden Actions publication has no eligible managed values")
+
+    connection = store.get_bitwarden_connection(args.connection)
+    namespace, origin = project_namespace(directory)
+    assert_connection_current(connection)
+    reject_bws_overrides()
+    adapter = load_local_adapter(
+        args.adapter_path,
+        required_operations=("read_environment",),
+    )
+    try:
+        access_token = _selected_bitwarden_token(args, store)
+    except Exception:
+        adapter.close()
+        raise
+    source_entries = read_environment_entries(
+        adapter,
+        connection,
+        access_token,
+        args.project_id,
+        tuple(entry.key for entry in assignments),
+    )
+    source_by_name = {entry.key: entry for entry in source_entries}
+    values = tuple(
+        StandbyValue(
+            assignment.key,
+            cast(Literal["secret", "variable"], assignment.kind),
+            source_by_name[assignment.key].value,
+            source_by_name[assignment.key].entry_id,
+        )
+        for assignment in assignments
+    )
+    publication_store = ActionsPublicationStore(getattr(store, "config_dir", None))
+    try:
+        result = publish_standby(
+            values,
+            args.repo,
+            apply=args.apply,
+            environment=args.github_environment,
+        )
+    except StandbyPublicationError as exc:
+        publication_store.save(
+            namespace,
+            plan.profile,
+            origin,
+            _publication_metadata(args, plan.profile, exc.result),
+        )
+        raise
+
+    target = (
+        f"GitHub environment {args.github_environment!r} in {args.repo}"
+        if args.github_environment is not None
+        else f"GitHub repository {args.repo}"
+    )
+    if not args.apply:
+        for entry in result.entries:
+            print(f"Would {entry.operation} {entry.kind} {entry.name} in {target}.")
+        print(
+            f"Previewed {len(result.entries)} Bitwarden standby value(s): "
+            f"{result.created} create(s), {result.updated} update(s)."
+        )
+        return 0
+
+    publication_store.save(
+        namespace,
+        plan.profile,
+        origin,
+        _publication_metadata(args, plan.profile, result),
+    )
+    variables = sum(entry.result == "value-verified" for entry in result.entries)
+    secrets = sum(entry.result == "name-type-verified" for entry in result.entries)
+    operations = (
+        f"{result.created} created, {result.updated} updated"
+        if result.created and result.updated
+        else f"{result.created} created"
+        if result.created
+        else f"{result.updated} updated"
+    )
+    print(
+        f"Published {len(result.entries)} Bitwarden standby value(s) to {args.repo}: "
+        f"{operations}; {variables} variable{'s' if variables != 1 else ''} verified exactly, "
+        f"{secrets} secret{'s' if secrets != 1 else ''} verified by name/type only."
+    )
+    return 0
+
+
 def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: Path) -> int:
     if args.bitwarden_command == "connection":
         if args.connection_command == "set":
@@ -228,6 +382,9 @@ def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: 
             store.remove_bitwarden_credential(args.connection)
             print(f"Removed Bitwarden credential: {args.connection}")
         return 0
+
+    if args.bitwarden_command == "actions":
+        return _bitwarden_actions_publish(args, store, directory)
 
     if args.bitwarden_command == "env":
         restore_plan = None

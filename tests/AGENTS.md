@@ -12,6 +12,7 @@ Deterministic pytest coverage for CLI and credential boundaries, GitHub token me
 | `test_store.py` | Token and environment store lifecycle, restrictive permissions, payload/index isolation, replacement rules, validation, missing-secret errors, and a temporary executable fake `pass` backend. |
 | `test_bitwarden_connection.py` | Synthetic bws profile parsing, connection drift, credential-source isolation, explicit local-adapter loading, and project-result validation. |
 | `test_bitwarden_environments.py` | Synthetic exact-name Bitwarden reads/writes, previewed upload, fresh-clone dotenv recovery, response isolation, portable round trips, and atomic replacement. |
+| `test_bitwarden_actions.py` | Synthetic Bitwarden-to-GitHub standby preview/apply, scope isolation, stdin writes, read-back verification, partial failure, and value-free metadata. |
 | `test_vault_features.py` | Project-origin namespace normalization, dotenv and two-stage migration contracts, split archive/restore/show boundaries, remote Actions type checks, persistent exports, ephemeral `act` lifecycle, and workflow-wiring checks. |
 | `test_capability_boundaries.py` | End-to-end local characterization of documented limitations, with only external subprocess boundaries replaced. |
 | `records/` | Synthetic Node record-validator regressions, isolated from Python product tests. |
@@ -25,9 +26,10 @@ Deterministic pytest coverage for CLI and credential boundaries, GitHub token me
 - Environment and workflow tests use temporary files plus mocked Git/GitHub subprocess boundaries; they must not read a real `.env`, password store, or GitHub account.
 - Bitwarden tests use synthetic TOML, UUIDs, access tokens, and local adapter packages under pytest temporary directories. They never import the SDK, read the operator's bws config, or contact Bitwarden.
 - Bitwarden environment tests recreate and upload only temporary `.env` files through synthetic adapter responses; local-only entries remain outside adapter requests, write read-backs are validated in-process, and no cached mapping is assumed.
+- Bitwarden Actions tests publish only synthetic adapter values through mocked `gh` processes. They assert explicit repository/Environment scope, no delete/selector mutation, exact Variable read-back, Secret name/type-only evidence, and metadata with no values or hashes.
 - Environment-scoped Actions tests assert the read-only GitHub Environment preflight and every `--env` argument, including the scope-local delete/migration boundary.
 - Git credential tests cover allowed protocol/host combinations and assert the exact protocol response.
-- Permission checks target POSIX mode `0700` for config/environment directories and `0600` for metadata, payload, and index JSON files.
+- Permission checks target POSIX mode `0700` for config/environment/publication directories and `0600` for metadata, payload, and index JSON files.
 
 ## Work Guidance
 

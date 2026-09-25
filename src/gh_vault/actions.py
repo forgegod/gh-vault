@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -17,6 +18,21 @@ from .store import StoreError, VaultStore
 RESERVED = re.compile(r"^(?:GITHUB_.*|RUNNER_.*|CI|GH_TOKEN)$")
 REF = re.compile(r"\b(?P<kind>secrets|vars)\.(?P<name>[A-Z][A-Z0-9_]*)")
 DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_GH_ISOLATED_ENV_NAMES = (
+    "BWS_ACCESS_TOKEN",
+    "BWS_CONFIG_FILE",
+    "BWS_PROFILE",
+    "BWS_SERVER_URL",
+)
+
+
+def _gh_environment(environment: Mapping[str, str] | None = None) -> dict[str, str]:
+    base = os.environ if environment is None else dict(environment)
+    return {
+        name: value
+        for name, value in base.items()
+        if name not in _GH_ISOLATED_ENV_NAMES
+    }
 
 
 
@@ -43,6 +59,52 @@ class RemoteValueStatus:
 class SyncResult:
     synced: int
     pruned: int
+
+
+@dataclass(frozen=True)
+class StandbyValue:
+    name: str
+    kind: Literal["secret", "variable"]
+    value: str
+    source_id: str
+
+
+@dataclass(frozen=True)
+class StandbyEntryResult:
+    name: str
+    kind: Literal["secret", "variable"]
+    source_id: str
+    operation: Literal["create", "update"]
+    result: Literal["preview", "value-verified", "name-type-verified", "failed"]
+    remote_revision: str | None
+
+
+@dataclass(frozen=True)
+class StandbyPublicationResult:
+    applied: bool
+    status: Literal["preview", "success", "failure"]
+    entries: tuple[StandbyEntryResult, ...]
+    failed_name: str | None = None
+
+    @property
+    def created(self) -> int:
+        return sum(entry.operation == "create" for entry in self.entries)
+
+    @property
+    def updated(self) -> int:
+        return sum(entry.operation == "update" for entry in self.entries)
+
+
+class StandbyPublicationError(StoreError):
+    def __init__(self, message: str, result: StandbyPublicationResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
+@dataclass(frozen=True)
+class _RemoteActionValue:
+    value: str | None
+    updated_at: str
 
 
 def action_values(env_file: Path, store: VaultStore | None = None) -> list[ActionValue]:
@@ -256,6 +318,182 @@ def sync(
                     f"cannot set {kind} '{entry.name}'; stale counterpart was removed and must be restored manually: {result.stderr.strip() or 'gh failed'}"
                 )
     return SyncResult(len(entries), len(prune_names))
+
+
+def _require_environment_value_free(repo: str, environment: str | None) -> None:
+    if environment is None:
+        return
+    if not environment:
+        raise StoreError("GitHub environment must not be empty")
+    result = subprocess.run(
+        _environment_api_command(repo, environment),
+        text=True,
+        capture_output=True,
+        check=False,
+        env=_gh_environment(),
+    )
+    if result.returncode:
+        raise StoreError(f"cannot access GitHub environment {environment!r}")
+
+
+def _remote_action_values(
+    kind: Literal["secret", "variable"],
+    repo: str,
+    environment: str | None,
+) -> dict[str, _RemoteActionValue]:
+    fields = "name,updatedAt" if kind == "secret" else "name,value,updatedAt"
+    result = subprocess.run(
+        ["gh", kind, "list", *_scope_arguments(repo, environment), "--json", fields],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=_gh_environment(),
+    )
+    if result.returncode:
+        raise StoreError(f"cannot inspect GitHub {kind}s at the selected scope")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise StoreError(f"GitHub {kind} inspection returned invalid data") from None
+    expected = {"name", "updatedAt"} if kind == "secret" else {"name", "value", "updatedAt"}
+    if not isinstance(payload, list):
+        raise StoreError(f"GitHub {kind} inspection returned invalid data")
+    remote: dict[str, _RemoteActionValue] = {}
+    for item in payload:
+        if (
+            not isinstance(item, dict)
+            or set(item) != expected
+            or not isinstance(item.get("name"), str)
+            or not DOTENV_KEY.fullmatch(item["name"])
+            or not isinstance(item.get("updatedAt"), str)
+            or not item["updatedAt"]
+            or (kind == "variable" and not isinstance(item.get("value"), str))
+            or item["name"] in remote
+        ):
+            raise StoreError(f"GitHub {kind} inspection returned invalid data")
+        remote[item["name"]] = _RemoteActionValue(
+            item.get("value") if kind == "variable" else None,
+            item["updatedAt"],
+        )
+    return remote
+
+
+def publish_standby(
+    entries: tuple[StandbyValue, ...],
+    repo: str,
+    *,
+    apply: bool,
+    environment: str | None = None,
+) -> StandbyPublicationResult:
+    if not entries:
+        raise StoreError("Bitwarden Actions publication has no eligible managed values")
+    seen: set[str] = set()
+    for entry in entries:
+        if not DOTENV_KEY.fullmatch(entry.name) or entry.name in seen:
+            raise StoreError("Bitwarden Actions publication contains invalid names")
+        seen.add(entry.name)
+        if entry.kind not in {"secret", "variable"}:
+            raise StoreError("Bitwarden Actions publication contains an invalid type")
+        if not entry.value:
+            raise StoreError(f"GitHub standby value {entry.name} must not be empty")
+        if RESERVED.fullmatch(entry.name):
+            raise StoreError(f"GitHub standby value {entry.name} uses a reserved name")
+
+    _require_environment_value_free(repo, environment)
+    remote_secrets = _remote_action_values("secret", repo, environment)
+    remote_variables = _remote_action_values("variable", repo, environment)
+    planned: list[StandbyEntryResult] = []
+    for entry in entries:
+        opposite = remote_variables if entry.kind == "secret" else remote_secrets
+        if entry.name in opposite:
+            opposite_name = "variable" if entry.kind == "secret" else "secret"
+            raise StoreError(f"{entry.name} exists as a GitHub {opposite_name} at the selected scope")
+        target = remote_secrets if entry.kind == "secret" else remote_variables
+        operation: Literal["create", "update"] = "update" if entry.name in target else "create"
+        planned.append(
+            StandbyEntryResult(
+                entry.name,
+                entry.kind,
+                entry.source_id,
+                operation,
+                "preview",
+                target[entry.name].updated_at if entry.name in target else None,
+            )
+        )
+    if not apply:
+        return StandbyPublicationResult(False, "preview", tuple(planned))
+
+    completed: list[StandbyEntryResult] = []
+    for entry, plan in zip(entries, planned):
+        command = ["gh", entry.kind, "set", entry.name, *_scope_arguments(repo, environment)]
+        set_result = subprocess.run(
+            command,
+            input=entry.value,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=_gh_environment(),
+        )
+        if set_result.returncode:
+            failed = StandbyEntryResult(
+                entry.name,
+                entry.kind,
+                entry.source_id,
+                plan.operation,
+                "failed",
+                None,
+            )
+            result = StandbyPublicationResult(
+                True,
+                "failure",
+                tuple((*completed, failed)),
+                entry.name,
+            )
+            raise StandbyPublicationError(
+                f"GitHub standby publication failed after {len(completed)} of {len(entries)} value(s); remote state may have changed",
+                result,
+            )
+        try:
+            remote = _remote_action_values(entry.kind, repo, environment)
+            readback = remote.get(entry.name)
+            if readback is None:
+                raise StoreError(f"GitHub {entry.kind} {entry.name} is absent after publication")
+            if entry.kind == "variable" and readback.value != entry.value:
+                raise StoreError(f"GitHub variable {entry.name} read-back did not match")
+        except StoreError as exc:
+            failed = StandbyEntryResult(
+                entry.name,
+                entry.kind,
+                entry.source_id,
+                plan.operation,
+                "failed",
+                None,
+            )
+            result = StandbyPublicationResult(
+                True,
+                "failure",
+                tuple((*completed, failed)),
+                entry.name,
+            )
+            if "read-back did not match" in str(exc):
+                message = str(exc)
+            else:
+                message = (
+                    f"GitHub standby publication failed after {len(completed)} of {len(entries)} "
+                    "value(s); remote state may have changed"
+                )
+            raise StandbyPublicationError(message, result) from None
+        completed.append(
+            StandbyEntryResult(
+                entry.name,
+                entry.kind,
+                entry.source_id,
+                plan.operation,
+                "value-verified" if entry.kind == "variable" else "name-type-verified",
+                readback.updated_at,
+            )
+        )
+    return StandbyPublicationResult(True, "success", tuple(completed))
 
 
 def export_act(entries: list[ActionValue], secrets_path: Path, vars_path: Path) -> tuple[int, int]:

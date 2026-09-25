@@ -1,4 +1,4 @@
-# CAP-006 — GitHub Actions synchronization and comparison
+# CAP-006 — GitHub Actions synchronization, comparison, and standby publication
 
 **Status:** implemented
 **Primary surface:** none
@@ -11,11 +11,18 @@
 - `--dry-run` skips all remote sets/deletes. Prune/type-migration previews still list remote names; value selection may resolve vault references even during a preview.
 - `secret check` and `variable check` fetch remote names and report missing, remote-only, and opposite-type findings. Each command's exit status reflects only its own finding categories, without modifying dotenv files.
 - `variable import` writes repository or environment-scoped Variables as typed declarations into an existing selected `.env`, or its matching `.env.example` with commented assignments. Existing declarations are retained unless forced; force cannot reclassify a secret or local-only key.
+- `bitwarden actions publish` derives managed names/types from one explicit template, retrieves exact-name values and entry IDs from one explicit Bitwarden project, and requires an explicit destination repository. `--github-environment` is the only Environment selector; the local dotenv profile never infers it.
+- Publication defaults to a value-free create/update preview. `--apply` writes all selected values to GitHub on stdin, never deletes or migrates types, rejects empty values and opposite-type targets before writes, then verifies Variables by exact name/value and Secrets by name/type presence only.
+- Applied success and partial failure write restrictive, origin-bound metadata containing source entry IDs, destination scope, attempt time, GitHub revisions, operations, and per-key results. Metadata contains no values or value hashes and does not prove Secret equality, credential validity, or rollback readiness.
 
 ## Implementation
 
 - `src/gh_vault/actions.py` — action_values, sync, remote_secret_status, import_variables, default_repo.
-- `src/gh_vault/cli.py` — _run_sync and type-scoped check renderers.
+- `src/gh_vault/actions.py` — publish_standby and its value-free GitHub inspection/read-back boundary.
+- `src/gh_vault/bitwarden.py` — read_environment_entries retains validated source IDs for publication evidence.
+- `src/gh_vault/envfiles.py` — prepare_bitwarden_actions derives types from the selected template.
+- `src/gh_vault/store.py` — ActionsPublicationStore persists value-free publication results.
+- `src/gh_vault/cli.py` — _run_sync, type-scoped check renderers, and _bitwarden_actions_publish.
 
 ## Rules and boundaries
 
@@ -24,6 +31,8 @@
 - An environment-scoped operation first reads the named deployment environment through `gh api`; an absent or inaccessible environment stops the operation before it lists, sets, deletes, or imports values. gh-vault does not create or configure GitHub Environments or their protection rules.
 - Checks compare names/types, not remote Secret contents or permission adequacy. Their reserved-name filtering differs from profile-reference selection: a reserved name may be selected for sync but excluded from the local comparison set.
 - Values are selected before type filtering: an unresolved secret profile can also block a variable sync. Remote commands rely on the operator's authenticated `gh`; storing a profile does not automatically select it for `gh` authentication.
+- Standby publication uses the separately selected Bitwarden credential only for the local adapter call and the operator's ambient `gh` authentication only for GitHub. Every `gh` child environment removes the Bitwarden access token and bws configuration/profile overrides; the command never injects one credential into the other boundary or relays child stderr.
+- A failed standby batch is not rolled back. Metadata records completed and failed names without values, but a safe consumer/authentication probe is still required before treating a refreshed copy as usable rollback evidence.
 
 ## Verification
 
@@ -31,8 +40,9 @@
 - `tests/test_cli.py` — secret/variable sync dispatch and check tests assert type filtering, option exclusivity, summaries, finding isolation, and exit statuses.
 - `tests/test_vault_features.py` — `test_remote_secret_status_identifies_secret_variable_type_drift`, `test_environment_scoped_status_preflights_and_lists_only_that_environment`, `test_environment_scoped_sync_preflights_and_migrates_only_that_environment`, `test_environment_preflight_failure_prevents_mutation`, and the `test_import_variables_*` family assert repository/environment isolation, preflight, comparison, and import behavior.
 - `tests/test_capability_boundaries.py` — `test_cli_prune_does_not_preserve_opposite_type_or_empty_declarations` exercises real CLI selection through sync with a mocked external command boundary for both types.
+- `tests/test_bitwarden_actions.py` — `test_bitwarden_actions_publish_previews_exact_bws_values_without_writes_or_metadata`, `test_bitwarden_actions_publish_applies_with_stdin_readback_and_value_free_metadata`, `test_bitwarden_actions_publish_closes_adapter_after_preview`, `test_bitwarden_actions_publish_keeps_every_github_call_in_selected_environment`, `test_bitwarden_actions_publish_rejects_empty_values_before_github_access`, `test_bitwarden_actions_publish_rejects_type_drift_before_writes`, `test_bitwarden_actions_publish_records_partial_failure_without_child_diagnostics`, `test_bitwarden_actions_publish_rejects_changed_variable_readback`, and `test_bitwarden_actions_publish_does_not_leak_child_diagnostics_through_stderr` prove exact source selection, adapter cleanup, credential-isolated scope, stdin-only writes, value-free diagnostics, type/empty rejection, partial failure, read-back, and metadata boundaries with synthetic collaborators.
 - Run `uv run --no-project --with pytest python -m pytest`.
-- No test authenticates against GitHub or reads back live Secrets/Variables. Profile-reference selection evidence is not proof that GitHub accepts every selected name.
+- No test authenticates against GitHub or reads back live Secrets/Variables. Mocked Variable read-back and Secret name/type presence do not prove live GitHub acceptance, Secret equality, credential validity, or rollback readiness.
 
 ## Related contracts
 

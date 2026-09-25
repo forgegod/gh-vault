@@ -47,6 +47,13 @@ class BitwardenWriteResult:
     operation: Literal["create", "update"]
 
 
+@dataclass(frozen=True)
+class BitwardenEnvironmentEntry:
+    entry_id: str
+    key: str
+    value: str
+
+
 @dataclass
 class LocalBitwardenAdapter:
     resolve: Callable[..., object]
@@ -344,13 +351,13 @@ def resolve_project(
     return BitwardenProject(returned_project, returned_organization)
 
 
-def read_environment(
+def read_environment_entries(
     adapter: object,
     connection: BitwardenConnection,
     access_token: str,
     project_id: str,
     keys: tuple[str, ...],
-) -> dict[str, str]:
+) -> tuple[BitwardenEnvironmentEntry, ...]:
     reader = getattr(adapter, "read_environment", None)
     try:
         if not access_token or "\n" in access_token or "\r" in access_token:
@@ -401,7 +408,7 @@ def read_environment(
 
     requested = set(keys)
     seen_ids: set[str] = set()
-    values: dict[str, str] = {}
+    values: dict[str, BitwardenEnvironmentEntry] = {}
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {
             "id",
@@ -438,12 +445,31 @@ def read_environment(
             raise StoreError("Bitwarden adapter returned an invalid environment entry")
         if "\0" in value:
             raise StoreError(f"Bitwarden value for {key} contains NUL")
-        values[key] = value
+        values[key] = BitwardenEnvironmentEntry(entry_id, key, value)
 
     missing = [key for key in keys if key not in values]
     if missing:
         raise StoreError("Bitwarden environment is missing declared key(s): " + ", ".join(missing))
-    return {key: values[key] for key in keys}
+    return tuple(values[key] for key in keys)
+
+
+def read_environment(
+    adapter: object,
+    connection: BitwardenConnection,
+    access_token: str,
+    project_id: str,
+    keys: tuple[str, ...],
+) -> dict[str, str]:
+    return {
+        entry.key: entry.value
+        for entry in read_environment_entries(
+            adapter,
+            connection,
+            access_token,
+            project_id,
+            keys,
+        )
+    }
 
 
 def inspect_environment(

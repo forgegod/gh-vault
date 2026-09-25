@@ -7,7 +7,7 @@ This package contains upstream findings and a proposed contract, not implemented
 behavior or a second progress tracker. The owner's Phase 1 records approval and
 remaining work. Current CAPs and architecture are unchanged.
 
-## Decision requiring operator input
+## Approved license and loading boundary
 
 The official Python SDK can avoid secret values in argv, but this published MIT
 CLI cannot adopt it. The `bitwarden-sdk` 2.1.0 wheel contains the **Bitwarden
@@ -27,11 +27,11 @@ Both license copies inside the published Linux x86-64 wheel were inspected and
 contain those clauses. No SDK runtime dependency has been added or SDK credential
 operation executed.
 
-The only continuation compatible with that reading is an interface and
+The approved continuation compatible with that reading is an interface and
 non-functional mock in this repository, plus an operator-held private module
 loaded from a local path. A command that fetches or updates that module is not
-compatible. That split is not approved product behavior. Do not bypass the
-boundary with secret argv, custom cryptography, or raw REST.
+compatible. This approves implementation work, not current product behavior. Do
+not bypass the boundary with secret argv, custom cryptography, or raw REST.
 
 ## Verified upstream boundaries
 
@@ -66,7 +66,19 @@ boundary with secret argv, custom cryptography, or raw REST.
   retrieved secret `projectId`. Identifier listing returns names/IDs, not values;
   filter to the selected project before retrieving declared IDs. The Python
   wrapper exposes no pagination parameter. Completeness of underlying listing
-  and wrong-organization behavior still need verification before implementation.
+  and wrong-organization behavior cannot be delegated to the official CLI.
+- A credential-free TLS probe ran the installed `bws 2.1.0` against a local
+  synthetic server using the SDK's published test vector. The client exchanged
+  the synthetic machine credential at the selected identity endpoint, took the
+  organization UUID from the returned token, and issued exactly one authenticated
+  `GET /api/organizations/<uuid>/projects`. When that response contained an empty
+  `data` array plus a nonempty `continuationToken`, `bws` exited `0`, printed an
+  empty list, and made no second request. The bundled SDK list path likewise
+  discards the response continuation token. Native `bws project list` accepts no
+  expected-organization or continuation input. It therefore cannot prove complete
+  name discovery or independently bind an empty result to configured organization
+  metadata. Reusing bws profile endpoints remains viable; using the CLI as the
+  discovery implementation does not.
 
 ### Official GitHub action
 
@@ -97,8 +109,9 @@ behind [v3.0.1][action-release]. The [help page][action-help] still demonstrates
 - **Pinning limit:** the [Node launcher][action-launcher] downloads a release
   binary selected by `version.json` (or `SM_ACTION_VERSION`) without a digest
   check, and can build with Cargo on download failure. A full action commit SHA
-  does not make that executable transitively immutable. Approval must acknowledge
-  this upstream release-asset trust or require a revised execution boundary.
+  does not make that executable transitively immutable. The operator explicitly
+  accepted this residual upstream release-asset trust for the pinned candidate;
+  generated diagnostics must not claim transitive binary immutability.
 
 ### Empty values and evidence limits
 
@@ -117,16 +130,16 @@ empty configuration. Do not infer requiredness from example values.
 
 ## Proposed integration checklist
 
-These choices are for review, not approval or current CLI help. Client-dependent
-choices remain conditional on resolving the licensing and probe gates.
+These approved choices define later implementation work, not current CLI help or
+implemented behavior.
 
 | Topic | Proposed boundary |
 | --- | --- |
 | CLI names | Separate `gh-vault bitwarden` group: `connection set/list`, `credential set/remove`, `project resolve`, `env restore/upload`, `actions publish/generate`. No existing command silently changes backend. |
 | Connection | Every remote operation requires `--connection NAME`. Operator metadata binds a named bws profile/config path, validated resolved HTTPS endpoint pair, and expected organization UUID. Endpoint drift requires explicit rebinding before credential access. No repository TOML or region probing. |
 | Credential selection | Explicit `--credential-source env` (default) or `vault`; missing/empty selected source fails, never falls back. Environment source reads only `BWS_ACCESS_TOKEN`; vault source uses a separate typed entry below `gh-vault/bitwarden/`, never a GitHub profile. Storage accepts hidden prompt/stdin, not argv. |
-| Conflicts and state | Reject conflicting ambient bws endpoint/profile overrides. SDK candidate receives both endpoints explicitly, with no persistent auth state file. Keep GitHub injection and active-profile selection untouched. |
-| Discovery | Validate Git origin before lookup; exact repository basename, or mutually exclusive `--project-name` / `--project-id`. Validate UUID spelling before parsing. Require one accessible match in the expected organization and verify IDs/org/project membership on every response. No project creation. |
+| Conflicts and state | Reject conflicting ambient bws endpoint/profile overrides. The private local-path module receives both endpoints and the expected organization explicitly, with no persistent auth state file; `bws` is not the runtime discovery client. Keep GitHub injection and active-profile selection untouched. |
+| Discovery | Validate Git origin and require `--project-id` in the initial scope. Validate UUID spelling before parsing. Require an accessible project in the expected organization and verify IDs/org/project membership on every response. No name listing or project creation. Name derivation remains excluded until the official client exposes complete paging. |
 | Named dotenv profiles | `--env-file .env.NAME` requires an explicit project selector. Neither filename nor directive selects a GitHub Environment. |
 | Required/default/optional | All managed template keys required. No managed optional/default syntax in initial scope; missing fails rather than substituting examples. Local-only assignments stay inactive in restored output; comments and directives remain. |
 | Profile references | Reject `# gh-vault: secret PROFILE` in BWS-managed declarations before token/file/network access. Never upload its empty placeholder or automatically copy the GitHub PAT. |
@@ -153,11 +166,13 @@ Phase 5. Neither issue was patched during this contract-only phase.
 ## Evidence boundary
 
 Public release metadata, pinned source, wheel contents, sanitized local CLI help,
-and the synthetic baseline formatter probe were checked. No live credentials,
-Bitwarden/GitHub value writes, consuming workflows, SDK install matrix, official
-SDK runtime probe, or completed official-action test run establish this proposal.
-The Phase 1 gate is therefore not complete. Synthetic probes and source inspection
-must never be reported as the Phase 7 live canary.
+the credential-free local TLS client probe, and the synthetic baseline formatter
+probe were checked. No live credentials, Bitwarden/GitHub value writes, consuming
+workflows, SDK install matrix, or completed official-action test run establish
+runtime behavior. Phase 1 is complete because its contract decisions and local
+verification gate are recorded; later phases must supply implementation and live
+evidence. Synthetic probes and source inspection must never be reported as the
+Phase 7 live canary.
 
 [sdk-license]: https://github.com/bitwarden/sdk-sm/blob/0520690b9710af7a8b1e47aad776f002f369688f/languages/python/LICENSE
 [root-license]: https://github.com/bitwarden/sdk-sm/blob/0520690b9710af7a8b1e47aad776f002f369688f/LICENSE

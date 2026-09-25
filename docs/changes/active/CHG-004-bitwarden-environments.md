@@ -14,10 +14,10 @@ from `.env.example`, and optionally retrieve configuration directly in GitHub
 Actions with an explicit switch back to GitHub Secrets/Variables. SDK-calling
 implementation takes effect only in the private sibling `../gh-vault-bws`. This
 repository implements the CLI, credential boundary, local-path loader, and
-non-functional mock. The operator refined the concept to use externally
-provisioned machine accounts, operator-level region configuration, optional
-local encrypted token storage, and matching repository/project names instead of
-a mandatory repository TOML binding file.
+non-functional mock. The operator approved externally provisioned machine
+accounts, operator-level region configuration, optional local encrypted token
+storage, and an explicit project ID for the initial scope instead of incomplete
+project-name listing or a mandatory repository TOML binding file.
 
 This record is the sole phased plan, not a claim of implemented support. Creating
 it does not start specification, implementation, provisioning, or migration.
@@ -27,11 +27,10 @@ skills/software-development/phased-plan-execution/ skill". Later phases remain
 pending. No commit, push, release, live credential access, or remote write is
 authorized by this plan.
 
-The root currently excludes alternative secret backends. Before changing that
-contract, obtain explicit approval for the narrow Bitwarden extension and record
-it here; do not treat approval to write this plan as approval to execute it.
-Current CAPs, architecture, and security contracts remain unchanged until the
-corresponding implementation slice and executable evidence exist.
+The operator explicitly approved the narrow Bitwarden extension and local-path
+split in Phase 1. Current CAPs, architecture, and security contracts remain
+unchanged until the corresponding implementation slice and executable evidence
+exist; approval is not a claim of implemented behavior.
 
 ## SDK license boundary
 
@@ -69,8 +68,8 @@ That proposal is not adoptable as stated.
   name only the interface a substitute must satisfy: inputs, outputs, and
   value-free errors.
 
-License-compatible continuation, still not approved product behavior and not a
-change to the architectural non-goal:
+Approved implementation boundary, not current product behavior until its code,
+tests, and contracts land:
 
 - This repository may later define an interface and a non-functional mock. No
   SDK dependency, import, source, binary, or call recipe.
@@ -89,8 +88,7 @@ change to the architectural non-goal:
   change record. Do not implement those calls in this repository. Phases below
   that say "adapter" mean the local-path loader or mock in
   `src/gh_vault/bitwarden.py`, which delegates to the loaded module. Do not
-  implement them until this boundary and the backend non-goal extension are
-  explicitly approved.
+  implement them before Phase 2 begins from a verified Phase 1 checkpoint.
 
 ## Concept to carry forward
 
@@ -121,18 +119,17 @@ change to the architectural non-goal:
 
 ### Repository and key discovery without mandatory TOML
 
-- Under the explicitly selected connection/organization, derive the project name
-  from the Git origin's repository basename. Match exactly one accessible
-  project, then match declared dotenv keys to exact Bitwarden entry names inside
-  that project. Validate origin and identifiers before lookup; do not fuzzy-match,
-  infer sensitivity from names, or silently choose the first result.
-- Missing, inaccessible, or ambiguous matches fail with value-free diagnostics.
-  Discovery is read-only; creating/updating entries is a separate previewed
-  operation. Do not automatically create projects. Short names require an
-  organization-level uniqueness convention across GitHub owners; provide an
-  explicit project selector for exceptions rather than silently changing naming
-  rules. No mandatory `.gh-vault.toml` and no hidden durable cache required for
-  fresh-clone recovery.
+- Under the explicitly selected connection/organization, require `--project-id`
+  in the initial scope and match declared dotenv keys to exact Bitwarden entry
+  names inside that project. Validate the Git origin and UUID before lookup; do
+  not fuzzy-match, infer sensitivity from names, or silently choose a project.
+  Project-name derivation remains excluded until the official client exposes a
+  complete paged listing boundary.
+- Missing, inaccessible, wrong-organization, or mismatched IDs fail with
+  value-free diagnostics. Discovery is read-only; creating/updating entries is a
+  separate previewed operation. Do not automatically create projects. No
+  mandatory `.gh-vault.toml` and no hidden durable cache are required for
+  fresh-clone recovery; the operator supplies the project ID explicitly.
 - UUIDs identify resolved targets for the current operation and generated CI
   mappings. Renames and deleted/recreated entries require explicit reconciliation;
   a published UUID mapping must not silently rebind by name at runtime. Detecting
@@ -229,7 +226,7 @@ DOX, README/security contracts where applicable, and this record together.
 
 | # | Phase | Status | Verification gate |
 | --- | --- | --- | --- |
-| 1 | Resolve integration contracts and approval | in-progress | `make records-check` exits 0; integration-contract checklist below is resolved and explicitly approved |
+| 1 | Resolve integration contracts and approval | done (`make verify`: 206 Python tests, 82 Node tests, record validation; operator decisions recorded) | `make records-check` exits 0; integration-contract checklist below is resolved and explicitly approved |
 | 2 | Operator connection and project discovery | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0 |
 | 3 | Fresh-clone dotenv recovery | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py` exits 0; `make records-check` exits 0 |
 | 4 | Explicit upload to Bitwarden | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
@@ -249,14 +246,16 @@ DOX, README/security contracts where applicable, and this record together.
    portable multiline/file representation; derived per-job mapping destination;
    safe publication/read-back behavior; selector authority and standby metadata.
 3. Verify actual official client behavior with synthetic inputs only. Prefer
-   `bws` for compatibility with its existing server profiles; its documented write
-   interface puts values in argv, so do not use it for value writes. Never weaken
-   the no-secret-argv rule or implement cryptography/raw REST. Do not adopt the
-   SDK in this repository. The distribution question is closed in "SDK license
-   boundary" above: an open-source project that uses the SDK is outside section
-   3.1. Writes that need the SDK stay in an operator-held private module loaded
-   from a local path, and only after the approvals named there. An optional
-   dependency, installer, or agent recipe does not reopen it.
+   `bws` profiles for operator endpoint configuration; its documented write
+   interface puts values in argv, and its project-list path neither accepts an
+   expected organization nor follows a returned continuation token, so do not use
+   the CLI for value writes or discovery. Never weaken the no-secret-argv rule or
+   implement cryptography/raw REST. Do not adopt the SDK in this repository. The
+   distribution question is closed in "SDK license boundary" above: an open-source
+   project that uses the SDK is outside section 3.1. Operations that need the SDK
+   stay in an operator-held private module loaded from a local path, and only after
+   the approvals named there. An optional dependency, installer, or agent recipe
+   does not reopen it.
 4. Reconcile the help page's action major with the upstream release, verify
    `cloud_region`, `set_env`, masking/outputs, runner requirements, and choose a
    full commit SHA. Check actual empty-value support end-to-end, including GitHub
@@ -275,20 +274,22 @@ DOX, README/security contracts where applicable, and this record together.
 above is resolved and explicitly approved. This is contract approval, not proof
 of implemented behavior; do not change current CAP claims in this phase.
 
-**Current checkpoint:** Public-source and wheel inspection, isolated `bws 2.1.0`
-help, and a synthetic baseline formatter probe are recorded in the review package.
-`make verify` passed (206 Python tests, 82 Node tests, record validation).
-Phase 1 remains `in-progress` within this blocked CHG. The SDK distribution
-question is resolved against publishing an SDK-using application; see "SDK
-license boundary". Still required: official-client synthetic runtime/listing
-probes, the action's binary-trust decision, explicit approval of that boundary,
-and explicit approval to extend the backend non-goal. No architectural
-extension is approved and no current CAP changed.
+**Completion evidence:** Public-source and wheel inspection, isolated `bws 2.1.0`
+help, a credential-free local TLS client probe, and a synthetic baseline formatter
+probe are recorded in the review package. `bws` authenticated to the selected
+synthetic endpoints and made one organization-scoped project request, but silently
+discarded a nonempty continuation token. `make verify` passes (206 Python tests,
+82 Node tests, record validation). The operator approved the narrow backend
+extension and local-path split, selected explicit project-ID-only discovery for
+the initial scope, and accepted the pinned action launcher's residual unverified
+release-asset trust. No current CAP changed because no behavior is implemented.
+The CHG remains blocked between phases because this request selected only Phase 1,
+and Phase 2 execution is not authorized.
 **Operator decision:** do not publish an open-source project that uses the SDK.
 The suggested public `bws install` / GitHub `git pull` path is rejected. Retain
 upload and later phases under the local-path split; do not substitute read-only
 support, drop upload, or weaken argv and cryptography constraints. Do not
-implement until the boundary and the non-goal extension are explicitly approved.
+implement outside that approved boundary.
 
 ## Phase 2 — Operator connection and project discovery
 
@@ -305,9 +306,9 @@ implement until the boundary and the non-goal extension are explicitly approved.
    storage; bind it to the explicit server/profile and expected organization.
    Refuse conflicts instead of trying credentials against another server. Preserve
    GitHub profile storage/selection and credential-helper behavior.
-3. Resolve exact project names from validated Git origin and explicit overrides;
-   cover missing/duplicate/inaccessible projects, wrong organization, renamed
-   origin, region mismatch, and complete listing/pagination. Never auto-create.
+3. Require and verify an explicit project UUID after validating Git origin; cover
+   missing/invalid/inaccessible projects, wrong organization, renamed origin, and
+   region mismatch. Never list by name or auto-create in the initial scope.
 4. Add `tests/test_bitwarden_connection.py` with fake client/process boundaries;
    assert no token/value output, argv leakage, metadata leakage, shell mutation,
    unsolicited cross-project access, or accidental GitHub token inspection.
@@ -470,9 +471,9 @@ Bitwarden delivery and independent GitHub rollback.
 
 ## Sources and handoff
 
-Phase 1 evidence and unresolved approval gates are recorded above and in the
-review package. The phase table retains one in-progress row and six pending rows;
-no phase is complete. DOX ownership and child indexes remain accurate. Root/child
+Phase 1 evidence and operator decisions are recorded above and in the review
+package. The phase table records Phase 1 complete and six pending rows. DOX
+ownership and child indexes remain accurate. Root/child
 DOX, README, architecture, security, design decisions, and CAPs are intentionally
 unchanged because only review/progress artifacts changed, not current behavior.
 
@@ -487,6 +488,6 @@ Public references inform the concept; recheck supported versions in Phase 1:
 
 Resume with the repository-local
 [phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Resume the blocked Phase 1 decision before any implementation;
-re-read the applicable DOX chain, inspect current git state/baseline, and keep
-exactly one phase in progress.
+and this record. Select Phase 2 only in a new execution cycle after the Phase 1
+checkpoint; re-read the applicable DOX chain, inspect current git state/baseline,
+and keep exactly one phase in progress.

@@ -19,7 +19,7 @@ Current contracts are grounded in the Python implementation and offline assertio
 
 - GitHub API inspection, `gh`, and act boundaries are mocked. The fake `pass` executable proves command/payload behavior, not cryptography or GPG-agent unlocking. Tests do not access live credentials.
 - CAP-007 is partial: ephemeral act execution rejects vault-profile references even though persistent export supports them.
-- Destructive prune is scoped to selected values of one type; opposite-type or empty declarations are not protected. Bitwarden standby metadata does not prove Secret equality or rollback readiness (CAP-006). Workflow warning severity does not alone determine exit status (CAP-008).
+- Destructive prune is scoped to selected values of one type; opposite-type or empty declarations are not protected. Bitwarden standby metadata and generated workflow checks do not prove live Secret equality, action execution, or rollback readiness (CAP-006/CAP-008). Workflow warning severity does not alone determine exit status.
 - File permissions are tested; concurrent writes, symlink defense, crash durability, and cross-store rollback are not established. Remote PyPI/OIDC publishing is an operator contract in [RELEASING](../RELEASING.md), not a tested product capability.
 - CAPs classify their primary surface as `none`: command-line/protocol interactions have no canonical visual screen. Brand assets are not product wireframes.
 

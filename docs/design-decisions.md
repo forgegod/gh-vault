@@ -80,6 +80,17 @@ contents. Value-free local metadata supports review but cannot establish
 credential validity or rollback readiness, so a safe consumer probe remains an
 operator step.
 
+Dual-provider delivery is generated as two explicit consumer branches rather
+than per-key expression fallback. A single selector accepts repository
+`CONFIG_SOURCE` (`github` default) and a manual `config_source` override
+(`repository`, `github`, or `bitwarden`), resolving once per job. The GitHub
+branch needs no Bitwarden client, token, or network access; the Bitwarden branch
+uses the pinned official action with `set_env: false`, validates required step
+outputs, and then runs the identical consumer command. Typed declarations remain
+the sensitivity authority, while aliases and variable-only literal defaults are
+explicit generation inputs. Generated UUID mappings are derived artifacts, not a
+second hand-maintained inventory.
+
 ## Separate current behavior, progress, and rationale
 
 CAPs state behavior with executable evidence. An active CHG carries material

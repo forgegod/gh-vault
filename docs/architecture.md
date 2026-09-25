@@ -25,7 +25,7 @@ executable evidence. [README](../README.md) is the operator command guide;
 | `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project/environment inspection, read, and verified write-result validation | Operator bws config and local `gh_vault_bws` checkout |
 | `src/gh_vault/github.py` | Token scope/expiration inspection | HTTPS GET to GitHub user API |
 | `src/gh_vault/envfiles.py` | Dotenv syntax, origin identity, archive/restore/migration | Git origin lookup, explicit file inputs |
-| `src/gh_vault/actions.py` | Actions selection, sync/check/import, verified standby publication, act execution, workflow scanning | `gh`, act child, local workflow files |
+| `src/gh_vault/actions.py` | Actions selection, sync/check/import, verified standby publication, dual-provider generation, act execution, workflow scanning | `gh`, act child, local workflow files |
 
 `StoreError` is the shared application error boundary. The main CLI converts it
 to an argparse error; direct helper tests assert the exception instead. This is
@@ -63,6 +63,11 @@ not a blanket catch for every OS error or malformed input.
    type drift, and previews before `--apply`. Applied Variables are read back by
    exact name/value; Secrets are verified only by same-scope name/type presence.
    It never deletes, migrates types, or changes workflow provider selection.
+   Dual-provider generation separately inspects selected Bitwarden UUIDs and
+   emits a value-free, commit-ready workflow fragment. One selector resolves the
+   repository/manual provider once per job; explicit consumer branches use the
+   same command and never mix provider expressions. Offline checks validate the
+   marked literal shape without contacting either provider.
 6. `run-act` manages private temporary files for literal typed values and waits
    for the child. Persistent export supports vault references; ephemeral runs
    reject them. Workflow check is a local line-based reference scanner.
@@ -74,6 +79,7 @@ not a blanket catch for every OS error or malformed input.
 | Bitwarden connections | XDG `gh-vault/config.json` | bws config/profile, resolved endpoint pair, expected organization UUID |
 | Bitwarden access tokens | `pass`: `gh-vault/bitwarden/<connection>` or selected `BWS_ACCESS_TOKEN` | Separate credential source with no fallback |
 | Standby publication metadata | XDG `gh-vault/publications/<host>/<path>/env[.<profile>].standby.json` | Version 1, exact source origin, destination scope, source IDs, remote revisions, and value-free per-key results |
+| Generated dual-provider fragment | Operator-selected file or stdout | Mode `0644` when written; source UUIDs, aliases, variable defaults, pinned action, selector, output checks, and duplicated consumer command; no values/hashes |
 | Public variables | XDG `gh-vault/environments/<host>/<path>/env[.<profile>].variables.json` | Version 1, exact origin, string values |
 | Environment index | Same directory, `environments.json` | Version 1, origin, per-profile boolean presence fields |
 | Archived secrets | `pass`: `gh-vault/projects/<host>/<path>/env[.<profile>].secrets.json` | Version 3, origin, string values |

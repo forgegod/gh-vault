@@ -417,6 +417,76 @@ refresh, run a safe workflow or authentication probe against the GitHub-backed
 configuration, and only then treat the standby copy as usable. Keep the previous
 working values until that probe succeeds.
 
+### Generate an explicit dual-provider workflow block
+
+`bitwarden actions generate` inspects UUIDs for one declared job subset and
+produces a value-free workflow fragment containing one validated provider
+selector, the pinned official Bitwarden action, required-output checks, and two
+copies of the same consumer command behind explicit GitHub/Bitwarden branches.
+Kinds always come from the template directives; aliases and variable defaults
+are explicit CLI inputs. Secret defaults, bootstrap keys, duplicate UUIDs, and
+duplicate aliases are rejected before credential access.
+
+```sh
+cat > consumer-command.sh <<'EOF'
+python exporter.py --test
+EOF
+
+gh-vault bitwarden actions generate \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws \
+  --repo owner/repo \
+  --region eu \
+  --key REGION --key API_KEY \
+  --alias REGION=APP_REGION \
+  --alias API_KEY=APP_API_KEY \
+  --default REGION=eu-central-1 \
+  --consumer-command @file:consumer-command.sh \
+  --output dual-provider.steps.yml
+```
+
+The generated mode-`0644` fragment contains no values or value hashes. Insert it
+under the intended job's `steps:` after declaring this manual input on the
+workflow:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      config_source:
+        type: choice
+        default: repository
+        options:
+          - repository
+          - github
+          - bitwarden
+```
+
+Repository variable `CONFIG_SOURCE` is optional: unset means `github`; the only
+valid nonempty values are `github` and `bitwarden`. A manual run may select
+`repository` (use the repository value), `github`, or `bitwarden`. Scheduled and
+other non-manual runs ignore the manual input and use the repository setting.
+The selector resolves once per job. The GitHub branch never references the
+Bitwarden token or action, and there is no per-key provider fallback. Literal
+defaults are allowed only for Variables and are applied identically to both
+provider branches.
+
+The official action remains pinned to
+`bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793`, uses
+`set_env: false`, and exports aliases as step outputs. Its launcher still
+downloads a release binary without a digest check; the commit pin is not
+transitive executable immutability. Place the generated retrieval before the
+first consumer, including `actions/checkout` when a required value authenticates
+submodule access. Do not run the Bitwarden branch for untrusted fork/PR code.
+
+`gh-vault workflow check` recognizes exact generated start/end markers and
+validates marker/mapping consistency, declaration types, duplicate UUIDs and
+aliases, the pin and region, required-output checks, equal consumer commands,
+the dispatch input shape, bootstrap-token placement, and submodule ordering.
+Because this is a line-based offline check, it does not execute GitHub expressions
+or prove a live runner/action result.
+
 ## Project environment archive
 
 Archives split typed `.env` and `.env.<profile>` declarations by sensitivity under the normalized `remote.origin.url` namespace (`<host>/<owner>/<repo>`): `variable` values use restrictive JSON below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/`, while `secret` values remain encrypted in `pass`. Unmarked local values are never archived. Templates are encrypted only for profiles containing secrets.

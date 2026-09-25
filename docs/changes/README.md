@@ -69,7 +69,7 @@ than a profile-private plan.
 
 ## Current records
 
-- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 5 completed previewed, read-back-verified GitHub standby publication with value-free metadata; Phase 6 is pending.
+- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 6 completed generated dual-provider workflow integration and offline diagnostics; Phase 7 live canary/integration remains pending.
 
 ## Archive
 

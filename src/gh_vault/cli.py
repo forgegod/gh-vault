@@ -10,7 +10,28 @@ from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import urlparse
 
-from .actions import RESERVED, StandbyPublicationError, StandbyPublicationResult, StandbyValue, action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, publish_standby, remote_secret_status, run_act, runtime_environment, suggested_env, sync
+from .actions import (
+    RESERVED,
+    WORKFLOW_BOOTSTRAP_NAMES,
+    StandbyPublicationError,
+    StandbyPublicationResult,
+    StandbyValue,
+    WorkflowValue,
+    action_values,
+    check_workflows,
+    default_repo,
+    export_act,
+    import_variables,
+    json_result,
+    migrate_env_source,
+    publish_standby,
+    remote_secret_status,
+    render_dual_provider_workflow,
+    run_act,
+    runtime_environment,
+    suggested_env,
+    sync,
+)
 from .bitwarden import BitwardenWrite, assert_connection_current, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_project, write_environment
 from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_actions, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
@@ -134,6 +155,22 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_publish.add_argument("--repo", type=github_repo, required=True, help="explicit destination repository as owner/repo or host/owner/repo")
     bitwarden_publish.add_argument("--github-environment", type=github_environment, help="target GitHub Environment; defaults to repository scope")
     bitwarden_publish.add_argument("--apply", action="store_true", help="perform the previewed creates and updates")
+
+    bitwarden_generate = bitwarden_actions.add_parser("generate", help="emit a deterministic dual-provider workflow mapping", description="Resolve declared managed names and Bitwarden UUIDs, then render a reproducible dual-provider workflow mapping for one consumer step.")
+    bitwarden_generate.add_argument("--connection", type=profile_name, required=True, help="configured connection name")
+    bitwarden_generate.add_argument("--project-id", type=project_uuid, required=True, help="canonical Bitwarden project UUID")
+    bitwarden_generate.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_generate.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bitwarden_generate.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> selecting the matching declaration template")
+    bitwarden_generate.add_argument("--example-file", type=Path, help="declaration template; defaults to the matching .env.example variant")
+    bitwarden_generate.add_argument("--repo", type=github_repo, required=True, help="explicit destination repository as owner/repo or host/owner/repo")
+    bitwarden_generate.add_argument("--github-environment", type=github_environment, help="target GitHub Environment; defaults to repository scope")
+    bitwarden_generate.add_argument("--region", choices=("eu", "us"), required=True, help="explicit Bitwarden server region for cloud_region")
+    bitwarden_generate.add_argument("--key", action="append", default=[], help="restrict the generated mapping to one managed key; repeat to add more")
+    bitwarden_generate.add_argument("--alias", action="append", default=[], help="set the consumer-step alias for one managed key as KEY=ALIAS; repeat to add more")
+    bitwarden_generate.add_argument("--default", action="append", default=[], help="set the literal default for one managed key as KEY=DEFAULT; repeat to add more")
+    bitwarden_generate.add_argument("--consumer-command", required=True, help="consumer shell command to run after the provider step; @file:path reads the file content")
+    bitwarden_generate.add_argument("--output", type=Path, help="write the generated mapping to this file instead of stdout")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
@@ -343,6 +380,134 @@ def _bitwarden_actions_publish(
     return 0
 
 
+def _parse_pair(values: list[str], *, separator: str, label: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for raw in values:
+        if separator not in raw:
+            raise StoreError(f"{label} entries must be in KEY{separator}VALUE form: {raw!r}")
+        key, value = raw.split(separator, 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or not value:
+            raise StoreError(f"{label} entries must have non-empty KEY and VALUE: {raw!r}")
+        if key in pairs:
+            raise StoreError(f"{label} entries must not repeat key {key!r}")
+        pairs[key] = value
+    return pairs
+
+
+def _resolve_consumer_command(raw: str) -> str:
+    if raw.startswith("@file:"):
+        path = Path(raw[len("@file:") :])
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise StoreError(f"cannot read consumer command file {path}: {exc}") from None
+    if "@" in raw or "\0" in raw:
+        raise StoreError("consumer command must be inline text or @file:path")
+    return raw
+
+
+def _bitwarden_actions_generate(
+    args: argparse.Namespace,
+    store: VaultStore,
+    directory: Path,
+) -> int:
+    example_file = args.example_file or example_file_for(args.env_file)
+    plan = prepare_bitwarden_actions(args.env_file, example_file)
+    selected = (
+        {key for key in args.key}
+        if args.key
+        else {entry.key for entry in plan.entries}
+    )
+    declared_keys = {entry.key for entry in plan.entries if not RESERVED.fullmatch(entry.key)}
+    bootstrap_selected = selected & WORKFLOW_BOOTSTRAP_NAMES
+    if bootstrap_selected:
+        raise StoreError(
+            f"Bitwarden Actions keys {sorted(bootstrap_selected)!r} are bootstrap values and cannot be fetched"
+        )
+    invalid_selected = selected - declared_keys
+    if invalid_selected:
+        raise StoreError(
+            f"Bitwarden Actions keys {sorted(invalid_selected)!r} are not declared"
+        )
+    assignments = tuple(
+        entry
+        for entry in plan.entries
+        if entry.key in selected and not RESERVED.fullmatch(entry.key)
+    )
+    if not assignments:
+        raise StoreError("Bitwarden Actions generation has no eligible managed values")
+    aliases = _parse_pair(args.alias, separator="=", label="alias")
+    defaults = _parse_pair(args.default, separator="=", label="default")
+    unknown_alias = set(aliases) - {entry.key for entry in assignments}
+    if unknown_alias:
+        raise StoreError(
+            f"Bitwarden Actions aliases {sorted(unknown_alias)!r} are not declared keys"
+        )
+    unknown_default = set(defaults) - {entry.key for entry in assignments}
+    if unknown_default:
+        raise StoreError(
+            f"Bitwarden Actions defaults {sorted(unknown_default)!r} are not declared keys"
+        )
+    for assignment in assignments:
+        if assignment.kind == "secret" and assignment.key in defaults:
+            raise StoreError(
+                f"Bitwarden Actions defaults are not allowed for secret key {assignment.key!r}"
+            )
+
+    connection = store.get_bitwarden_connection(args.connection)
+    project_namespace(directory)
+    assert_connection_current(connection)
+    reject_bws_overrides()
+    adapter = load_local_adapter(
+        args.adapter_path,
+        required_operations=("inspect_environment",),
+    )
+    try:
+        access_token = _selected_bitwarden_token(args, store)
+    except Exception:
+        adapter.close()
+        raise
+    inspected = inspect_environment(
+        adapter,
+        connection,
+        access_token,
+        args.project_id,
+        tuple(entry.key for entry in assignments),
+    )
+    values = tuple(
+        WorkflowValue(
+            assignment.key,
+            cast(Literal["secret", "variable"], assignment.kind),
+            inspected[assignment.key],
+            alias=aliases.get(assignment.key, assignment.key),
+            default=defaults.get(assignment.key),
+        )
+        for assignment in assignments
+    )
+    consumer_command = _resolve_consumer_command(args.consumer_command)
+    artifact = render_dual_provider_workflow(
+        values,
+        connection=connection.name,
+        project_id=args.project_id,
+        organization_id=connection.organization_id,
+        repo=args.repo,
+        github_environment=args.github_environment,
+        region=args.region,
+        consumer_command=consumer_command,
+    )
+    if args.output is not None:
+        try:
+            args.output.write_text(artifact.text, encoding="utf-8")
+            args.output.chmod(0o644)
+        except OSError as exc:
+            raise StoreError(f"cannot write generated workflow artifact {args.output}: {exc}") from None
+    else:
+        sys.stdout.write(artifact.text)
+    return 0
+
+
 def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: Path) -> int:
     if args.bitwarden_command == "connection":
         if args.connection_command == "set":
@@ -384,7 +549,9 @@ def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: 
         return 0
 
     if args.bitwarden_command == "actions":
-        return _bitwarden_actions_publish(args, store, directory)
+        if args.bitwarden_actions_command == "publish":
+            return _bitwarden_actions_publish(args, store, directory)
+        return _bitwarden_actions_generate(args, store, directory)
 
     if args.bitwarden_command == "env":
         restore_plan = None
@@ -699,7 +866,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
         if args.fix and result["unreferenced"]:
             unreferenced = {str(finding["name"]) for finding in result["unreferenced"]}
             print("Suggested env block:\n" + suggested_env([entry for entry in entries if entry.name in unreferenced]))
-    return 1 if any(result[key] for key in ("unreferenced", "type_mismatch", "order")) else 0
+    return 1 if any(result[key] for key in ("unreferenced", "type_mismatch", "order", "bootstrap")) else 0
 
 
 def main() -> int:

@@ -109,3 +109,124 @@ def test_quoted_shell_metacharacters_remain_literal(tmp_path: Path, literal: str
     env_file = tmp_path / ".env"
     env_file.write_text(f"SINGLE='{literal}'\nDOUBLE={json.dumps(literal)}\n", encoding="utf-8")
     assert parse_dotenv(env_file) == {"SINGLE": literal, "DOUBLE": literal}
+
+
+def test_workflow_check_accepts_generated_dual_provider_block_and_rejects_bootstrap_leak(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# gh-vault: variable\nREGION=eu\n"
+        "# gh-vault: secret\nAPI_KEY=synthetic\n",
+        encoding="utf-8",
+    )
+    artifact = actions.render_dual_provider_workflow(
+        (
+            actions.WorkflowValue(
+                "REGION",
+                "variable",
+                "33333333-3333-4333-8333-333333333331",
+                "APP_REGION",
+                None,
+            ),
+            actions.WorkflowValue(
+                "API_KEY",
+                "secret",
+                "33333333-3333-4333-8333-333333333332",
+                "APP_API_KEY",
+                None,
+            ),
+        ),
+        connection="eu-production",
+        project_id="22222222-2222-4222-8222-222222222222",
+        organization_id="11111111-1111-4111-8111-111111111111",
+        repo="owner/repo",
+        github_environment=None,
+        region="eu",
+        consumer_command="python app.py",
+    )
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    workflow = workflows / "dual.yml"
+    workflow.write_text(
+        "name: Synthetic dual provider\n"
+        "on:\n"
+        "  workflow_dispatch:\n"
+        "    inputs:\n"
+        "      config_source:\n"
+        "        type: choice\n"
+        "        default: repository\n"
+        "        options:\n"
+        "          - repository\n"
+        "          - github\n"
+        "          - bitwarden\n"
+        "jobs:\n"
+        "  test:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        + artifact.text,
+        encoding="utf-8",
+    )
+    entries = actions.action_values(env_file, VaultStore(config_dir=tmp_path / "config", pass_tool="unused-pass"))
+    result = actions.check_workflows(tmp_path, entries)
+    assert result["bootstrap"] == []
+    assert result["unreferenced"] == []
+    assert result["type_mismatch"] == []
+    assert result["order"] == []
+
+    original = workflow.read_text(encoding="utf-8")
+    workflow.write_text(
+        original.replace(
+            "33333333-3333-4333-8333-333333333331 > APP_REGION",
+            "33333333-3333-4333-8333-333333333339 > APP_REGION",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = actions.check_workflows(tmp_path, entries)
+    assert any("mapping for REGION is stale or missing" in str(finding["message"]) for finding in result["order"])
+
+    workflow.write_text(
+        original.replace(
+            '[ -n "$APP_API_KEY" ] || { echo "::error::Missing Bitwarden value: APP_API_KEY"; exit 1; }\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+    result = actions.check_workflows(tmp_path, entries)
+    assert any("required bitwarden value APP_API_KEY" in str(finding["message"]) for finding in result["order"])
+
+    workflow.write_text(
+        original.replace(
+            "# gh-vault: dual-provider-v1\n",
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          submodules: recursive\n"
+            "# gh-vault: dual-provider-v1\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = actions.check_workflows(tmp_path, entries)
+    assert any("retrieval must precede checkout with submodules" in str(finding["message"]) for finding in result["order"])
+
+    workflow.write_text(original, encoding="utf-8")
+
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8")
+        + "      - name: Leak bootstrap\n"
+        + "        env:\n"
+        + "          LEAK: ${{ secrets.BWS_ACCESS_TOKEN }}\n"
+        + "        run: echo bad\n",
+        encoding="utf-8",
+    )
+    result = actions.check_workflows(tmp_path, entries)
+    assert result["bootstrap"] == [
+        {
+            "file": "dual.yml",
+            "line": len(workflow.read_text(encoding="utf-8").splitlines()) - 1,
+            "severity": "error",
+            "name": "BWS_ACCESS_TOKEN",
+            "message": "BWS_ACCESS_TOKEN reference outside a recognized dual-provider block",
+        }
+    ]

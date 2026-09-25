@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault import cli
+from gh_vault import actions, cli
 from gh_vault.store import BitwardenConnection, StoreError
 
 ORGANIZATION_ID = "11111111-1111-4111-8111-111111111111"
@@ -61,6 +61,26 @@ class FakeAdapter:
 
     def close(self) -> None:
         self.closed += 1
+
+
+class InspectAdapter(FakeAdapter):
+    def inspect_environment(self, **request: object) -> object:
+        self.requests.append(request)
+        keys = request["keys"]
+        assert isinstance(keys, tuple)
+        return {
+            "project_id": request["project_id"],
+            "organization_id": request["organization_id"],
+            "entries": [
+                {
+                    "id": ENTRY_IDS[key],
+                    "key": key,
+                    "organization_id": request["organization_id"],
+                    "project_ids": [request["project_id"]],
+                }
+                for key in keys
+            ],
+        }
 
 
 def connection(tmp_path: Path) -> BitwardenConnection:
@@ -612,3 +632,233 @@ def test_bitwarden_actions_publish_does_not_leak_child_diagnostics_through_stder
     assert leaked not in str(caught.value)
     captured = os.environ.copy()
     assert "BWS_ACCESS_TOKEN" in captured
+
+
+def test_dual_provider_artifact_uses_explicit_branches_and_declared_types() -> None:
+    artifact = actions.render_dual_provider_workflow(
+        (
+            actions.WorkflowValue(
+                "REGION",
+                "variable",
+                ENTRY_IDS["REGION"],
+                "APP_REGION",
+                "eu-central-1",
+            ),
+            actions.WorkflowValue(
+                "API_KEY",
+                "secret",
+                ENTRY_IDS["API_KEY"],
+                "APP_API_KEY",
+                None,
+            ),
+        ),
+        connection="eu-production",
+        project_id=PROJECT_ID,
+        organization_id=ORGANIZATION_ID,
+        repo="owner/repo",
+        github_environment=None,
+        region="eu",
+        consumer_command="python exporter.py --test\nprintf 'done\\n'",
+    )
+
+    assert artifact.action_ref == (
+        "bitwarden/sm-action@1238aae8fc64b212641190a9227c8a734ab1a793"
+    )
+    assert "# gh-vault: dual-provider-v1" in artifact.text
+    assert f"{ENTRY_IDS['REGION']} > APP_REGION" in artifact.text
+    assert f"{ENTRY_IDS['API_KEY']} > APP_API_KEY" in artifact.text
+    assert "set_env: false" in artifact.text
+    assert "cloud_region: eu" in artifact.text
+    assert "steps.gh-vault-source.outputs.source == 'github'" in artifact.text
+    assert "steps.gh-vault-source.outputs.source == 'bitwarden'" in artifact.text
+    assert "APP_REGION: ${{ vars.REGION || 'eu-central-1' }}" in artifact.text
+    assert "APP_API_KEY: ${{ secrets.API_KEY }}" in artifact.text
+    assert (
+        "APP_REGION: ${{ steps.gh-vault-bitwarden.outputs.APP_REGION || "
+        "'eu-central-1' }}"
+    ) in artifact.text
+    assert "APP_API_KEY: ${{ steps.gh-vault-bitwarden.outputs.APP_API_KEY }}" in artifact.text
+    assert artifact.text.count("python exporter.py --test") == 2
+    assert "&& secrets." not in artifact.text
+    assert "&& vars." not in artifact.text
+
+
+@pytest.mark.parametrize(
+    ("event_name", "manual", "repository", "expected"),
+    [
+        ("schedule", "bitwarden", "github", "github"),
+        ("schedule", "", "", "github"),
+        ("workflow_dispatch", "repository", "bitwarden", "bitwarden"),
+        ("workflow_dispatch", "github", "bitwarden", "github"),
+        ("workflow_dispatch", "bitwarden", "github", "bitwarden"),
+        ("push", "github", "bitwarden", "bitwarden"),
+    ],
+)
+def test_resolve_config_source_matches_schedule_and_manual_contract(
+    event_name: str,
+    manual: str,
+    repository: str,
+    expected: str,
+) -> None:
+    assert actions.resolve_config_source(event_name, manual, repository) == expected
+
+
+@pytest.mark.parametrize(
+    ("manual", "repository"),
+    [("invalid", "github"), ("repository", "invalid")],
+)
+def test_resolve_config_source_rejects_invalid_nonempty_values(
+    manual: str,
+    repository: str,
+) -> None:
+    with pytest.raises(StoreError, match="must be"):
+        actions.resolve_config_source("workflow_dispatch", manual, repository)
+
+
+def test_dual_provider_artifact_rejects_duplicate_ids_aliases_and_secret_defaults() -> None:
+    base = actions.WorkflowValue(
+        "API_KEY",
+        "secret",
+        ENTRY_IDS["API_KEY"],
+        "APP_API_KEY",
+        None,
+    )
+    common = {
+        "connection": "eu-production",
+        "project_id": PROJECT_ID,
+        "organization_id": ORGANIZATION_ID,
+        "repo": "owner/repo",
+        "github_environment": None,
+        "region": "eu",
+        "consumer_command": "python app.py",
+    }
+    with pytest.raises(StoreError, match="duplicate Bitwarden entry ID"):
+        actions.render_dual_provider_workflow(
+            (base, actions.WorkflowValue("SECOND", "secret", ENTRY_IDS["API_KEY"], "SECOND", None)),
+            **common,
+        )
+    with pytest.raises(StoreError, match="duplicate workflow alias"):
+        actions.render_dual_provider_workflow(
+            (base, actions.WorkflowValue("SECOND", "secret", ENTRY_IDS["SECOND"], "APP_API_KEY", None)),
+            **common,
+        )
+    with pytest.raises(StoreError, match="secret defaults are not allowed"):
+        actions.render_dual_provider_workflow(
+            (actions.WorkflowValue("API_KEY", "secret", ENTRY_IDS["API_KEY"], "APP_API_KEY", "fallback"),),
+            **common,
+        )
+
+
+def test_bitwarden_actions_generate_uses_explicit_subset_aliases_and_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    write_template(example_file)
+    command_file = tmp_path / "consumer.sh"
+    command_file.write_text("python exporter.py --test\n", encoding="utf-8")
+    output = tmp_path / "dual-provider.yml"
+    adapter = InspectAdapter({})
+    store = prepare_dispatch(monkeypatch, tmp_path, adapter)
+    args = cli.build_parser().parse_args(
+        [
+            "bitwarden",
+            "actions",
+            "generate",
+            "--connection",
+            "eu-production",
+            "--project-id",
+            PROJECT_ID,
+            "--adapter-path",
+            "/operator/gh-vault-bws",
+            "--repo",
+            "owner/repo",
+            "--region",
+            "eu",
+            "--env-file",
+            str(env_file),
+            "--example-file",
+            str(example_file),
+            "--key",
+            "REGION",
+            "--key",
+            "API_KEY",
+            "--alias",
+            "REGION=APP_REGION",
+            "--alias",
+            "API_KEY=APP_API_KEY",
+            "--default",
+            "REGION=eu-central-1",
+            "--consumer-command",
+            f"@file:{command_file}",
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert cli.dispatch(args, store, tmp_path) == 0  # type: ignore[arg-type]
+    assert adapter.closed == 1
+    assert adapter.requests[0]["keys"] == ("REGION", "API_KEY")
+    assert adapter.requests[0]["access_token"] == ACCESS_TOKEN
+    text = output.read_text(encoding="utf-8")
+    assert output.stat().st_mode & 0o777 == 0o644
+    assert f"{ENTRY_IDS['REGION']} > APP_REGION" in text
+    assert f"{ENTRY_IDS['API_KEY']} > APP_API_KEY" in text
+    assert "eu-central-1" in text
+    assert "example-is-not-a-default" not in text
+
+
+@pytest.mark.parametrize(
+    ("extra", "match"),
+    [
+        (["--key", "BWS_ACCESS_TOKEN"], "bootstrap"),
+        (["--key", "MISSING"], "not declared"),
+        (["--key", "API_KEY", "--default", "API_KEY=fallback"], "are not allowed for secret"),
+    ],
+)
+def test_bitwarden_actions_generate_rejects_invalid_subset_before_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra: list[str],
+    match: str,
+) -> None:
+    env_file = tmp_path / ".env"
+    example_file = tmp_path / ".env.example"
+    write_template(example_file)
+    command_file = tmp_path / "consumer.sh"
+    command_file.write_text("python app.py\n", encoding="utf-8")
+
+    class NoAccessStore:
+        def get_bitwarden_connection(self, name: str) -> BitwardenConnection:
+            raise AssertionError("connection metadata must not be read")
+
+    arguments = [
+        "bitwarden",
+        "actions",
+        "generate",
+        "--connection",
+        "eu-production",
+        "--project-id",
+        PROJECT_ID,
+        "--adapter-path",
+        "/operator/gh-vault-bws",
+        "--repo",
+        "owner/repo",
+        "--region",
+        "eu",
+        "--env-file",
+        str(env_file),
+        "--example-file",
+        str(example_file),
+        "--consumer-command",
+        f"@file:{command_file}",
+        *extra,
+    ]
+    monkeypatch.setattr(cli, "load_local_adapter", lambda *args, **kwargs: pytest.fail("adapter must not load"))
+    with pytest.raises(StoreError, match=match):
+        cli.dispatch(
+            cli.build_parser().parse_args(arguments),
+            NoAccessStore(),  # type: ignore[arg-type]
+            tmp_path,
+        )

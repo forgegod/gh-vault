@@ -719,7 +719,7 @@ def test_export_act_and_workflow_check(tmp_path: Path) -> None:
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("env:\n  API_KEY: ${{ secrets.API_KEY }}\n  REGION: ${{ vars.REGION }}\n", encoding="utf-8")
-    assert check_workflows(tmp_path, entries) == {"unreferenced": [], "type_mismatch": [], "order": [], "orphan": []}
+    assert check_workflows(tmp_path, entries) == {"unreferenced": [], "type_mismatch": [], "order": [], "orphan": [], "bootstrap": []}
 
 
 @pytest.mark.parametrize("returncode", [0, 7])
@@ -860,6 +860,7 @@ def test_workflow_check_omits_defaulted_and_github_orphans(tmp_path: Path) -> No
         "type_mismatch": [],
         "order": [],
         "orphan": [{"file": "check.yml", "line": 8, "severity": "warning", "name": "REQUIRED", "message": "secrets.REQUIRED is not declared locally and has no fallback default"}],
+        "bootstrap": [],
     }
 
 

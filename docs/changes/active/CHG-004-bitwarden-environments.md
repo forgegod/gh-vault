@@ -20,10 +20,10 @@ storage, and an explicit project ID for the initial scope instead of incomplete
 project-name listing or a mandatory repository TOML binding file.
 
 This record is the sole phased plan, not a claim of fully implemented support.
-Phases 1–5 are complete at verified checkpoints. Later phases remain pending,
-and the record is blocked between phases until another execution cycle is
-selected. No commit, push, release, live credential access, or remote write is
-authorized by this plan.
+Phases 1–6 are complete at verified checkpoints. Phase 7 remains pending, and
+the record is blocked between phases until another execution cycle is selected.
+No commit, push, release, live credential access, or remote write is authorized
+by this plan.
 
 The operator explicitly approved the narrow Bitwarden extension and local-path
 split in Phase 1. Phases 2–5 implement connection metadata, optional encrypted
@@ -229,7 +229,7 @@ DOX, README/security contracts where applicable, and this record together.
 | 3 | Fresh-clone dotenv recovery | done (102 focused tests; `make verify`: 256 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py` exits 0; `make records-check` exits 0 |
 | 4 | Explicit upload to Bitwarden | done (55 focused tests; `make verify`: 275 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
 | 5 | Publish GitHub standby values | done (206 focused tests; record validation; `make verify`: 287 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
-| 6 | Dual-provider Actions and offline diagnostics | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
+| 6 | Dual-provider Actions and offline diagnostics | done (36 focused tests; record validation; `make verify`: 303 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
 | 7 | Integrate recovery evidence and current-state records | pending | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
 
 ## Phase 1 — Resolve integration contracts and approval
@@ -480,6 +480,23 @@ No live Bitwarden/GitHub call, remote write, commit, or push occurred.
 
 **Verification gate:** `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0.
 
+**Completion evidence:** `bitwarden actions generate` resolves one explicit typed
+job subset and exact Bitwarden UUIDs, applies explicit aliases and variable-only
+literal defaults, and emits a value-free mode-`0644` fragment. One selector
+resolves repository/manual provider choice once per job; the fragment pins the
+reviewed action, uses `set_env: false`, validates non-defaulted outputs, and runs
+the same consumer command behind separate GitHub and Bitwarden branches without
+per-key provider fallback. `workflow check` validates marked generated blocks
+offline for marker/mapping drift, local type agreement, duplicate UUIDs/aliases,
+pin/region/bootstrap contracts, required-output checks, equal consumer commands,
+dispatch choices/default, and ordering before submodule checkout. Synthetic tests
+cover selector schedules/manual overrides/invalid modes, aliases/defaults,
+duplicate rejection, value-free generation, stale maps, incomplete outputs,
+bootstrap leakage, and submodule ordering. The focused gate passes (36 tests),
+and `make records-check` plus `make verify` pass (303 Python tests and 82 Node
+tests). No live Bitwarden/GitHub call, action execution, remote write, commit, or
+push occurred.
+
 ## Phase 7 — Integrate recovery evidence and current-state records
 
 **Goal:** Prove recovery and provider reversal, and leave truthful maintained contracts.
@@ -528,12 +545,13 @@ Bitwarden delivery and independent GitHub rollback.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phases 1–5 complete and two later rows pending.
-CAP-001–CAP-004 and CAP-006, root/child DOX, README, architecture, security, and
-design decisions describe the implemented local connection, project,
-environment recovery/upload, and GitHub standby publication boundaries. They do
-not claim dual-provider workflow delivery, live service behavior, rollback
-readiness, or SDK implementation in this repository.
+package. The phase table records Phases 1–6 complete and Phase 7 pending.
+CAP-001–CAP-004, CAP-006, and CAP-008, root/child DOX, README,
+architecture, security, and design decisions describe the implemented local
+connection, project, environment recovery/upload, standby publication, generated
+dual-provider workflow, and offline diagnostic boundaries. They do not claim
+live service behavior, rollback readiness, or SDK implementation in this
+repository.
 
 Public references inform the concept; recheck supported versions in Phase 1:
 
@@ -546,5 +564,5 @@ Public references inform the concept; recheck supported versions in Phase 1:
 
 Resume with the repository-local
 [phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Phase 5 is complete and the record is blocked between phases;
-select Phase 6 in a new execution cycle before changing its implementation scope.
+and this record. Phase 6 is complete and the record is blocked between phases;
+select Phase 7 in a new execution cycle before changing its implementation scope.

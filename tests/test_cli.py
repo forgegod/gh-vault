@@ -119,6 +119,7 @@ def test_add_command_is_removed() -> None:
         (["bitwarden", "env", "restore", "--help"], "Recreate .env from its template"),
         (["bitwarden", "env", "upload", "--help"], "Preview exact-name creates and updates"),
         (["bitwarden", "actions", "publish", "--help"], "Read declared values from one Bitwarden project"),
+        (["bitwarden", "actions", "generate", "--help"], "Resolve declared managed names and Bitwarden UUIDs"),
         (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),

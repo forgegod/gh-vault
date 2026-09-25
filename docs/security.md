@@ -62,6 +62,16 @@ name/value or confirms Secret name/type presence in the same scope. GitHub does
 not return Secret contents, so neither success output nor metadata claims Secret
 equality, credential validity, or rollback readiness.
 
+Dual-provider generation requests only exact-name Bitwarden identifiers through
+the local adapter's inspection operation; it never retrieves managed values.
+Generated fragments may be committed and therefore contain only UUIDs, aliases,
+typed source names, variable defaults, selector/bootstrap references, and the
+operator-supplied consumer command. Review that command before committing it.
+The GitHub branch is explicitly gated away from the Bitwarden action/token; the
+Bitwarden branch uses a separately provisioned read-only project credential and
+must not run for untrusted fork/PR code. Masking and step-output transport do not
+make an untrusted consumer safe.
+
 ## Filesystem guarantees and limits
 
 - Config, public payload, and index JSON writes create/chmod private directories
@@ -77,6 +87,9 @@ equality, credential validity, or rollback readiness.
 - Standby publication metadata uses mode-`0700` directories and atomic mode-`0600`
   JSON replacement. It contains no values or value hashes and records only the
   latest attempt for one local dotenv profile.
+- Generated dual-provider fragments are value-free mode-`0644` text intended for
+  review and optional version control. UUIDs and organization/project identifiers
+  are metadata, not credentials, but still reveal deployment structure.
 - Restore/import and persistent act export use write-then-chmod and finish with
   `0600`; they do not guarantee private mode from the first byte on a newly
   created file. Use private directories and a restrictive umask. Symlink/race

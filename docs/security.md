@@ -20,8 +20,8 @@ review assets, or fixtures.
 | GitHub token | `pass`, in-process memory, GitHub inspection request, selected child environment, explicit credential stdout | Restrict profile access and downstream consumers |
 | Bitwarden access token | `pass` below `gh-vault/bitwarden/` or selected `BWS_ACCESS_TOKEN`, in-process local-adapter call | Provision externally; select one source explicitly and restrict the adapter checkout |
 | Bitwarden connection metadata | Restrictive XDG config JSON, ordinary connection-list output | Treat endpoint paths and organization IDs as local operator metadata, not credentials or authorization proof |
-| Typed secret | Encrypted archive, in-process Bitwarden response, selected child/process stdin, requested plaintext restore/export | Do not mark it `variable` |
-| Typed variable | Public XDG JSON, selected child, GitHub Variables, public show/restore/export | Classify it as safe for plaintext first |
+| Typed secret | Encrypted archive, selected Bitwarden project, in-process adapter request/response, selected child/process stdin, requested plaintext restore/export | Do not mark it `variable`; authorize remote upload explicitly |
+| Typed variable | Public XDG JSON, selected Bitwarden project, in-process adapter request/response, selected child, GitHub Variables, public show/restore/export | Classify it as safe for plaintext first |
 | Local-only assignment | Input file and any independently inherited environment | Not included in archive value payloads or injected from dotenv |
 | Profile metadata/index | Restrictive local JSON | Names, notes, paths, and metadata are not encrypted; do not put secrets there |
 | Eligible template | Raw encrypted template, explicit restore | Keep example files free of real/local-only values; raw text is preserved |
@@ -37,15 +37,19 @@ GitHub token inspection sends an Authorization header to
 credentials; a stored profile is not automatically the remote authentication
 identity. No separate telemetry service is implemented.
 
-Bitwarden project resolution and environment recovery never send a token through argv or a child
-environment. It validates one named bws profile and current Git origin before
-reading the selected credential, then invokes only an explicitly selected local
-`gh_vault_bws` package in-process. Ambient `BWS_CONFIG_FILE`, `BWS_PROFILE`, and
-`BWS_SERVER_URL` overrides are rejected. Adapter stdout/stderr and raw exception
-text are discarded. Environment reads additionally require exact declared names,
-canonical entry IDs, configured organization membership, selected project
-membership, string values without NUL, and a complete result before writing.
-The adapter remains trusted same-user code, not a sandbox.
+Bitwarden project resolution and environment restore/upload never send a token or
+managed value through argv or a child environment. They validate one named bws
+profile and current Git origin before reading the selected credential, then invoke
+only an explicitly selected local `gh_vault_bws` package in-process. Ambient
+`BWS_CONFIG_FILE`, `BWS_PROFILE`, and `BWS_SERVER_URL` overrides are rejected.
+Adapter stdout/stderr and raw exception text are discarded. Environment reads
+require exact declared names, canonical entry IDs, configured organization and
+selected project membership, string values without NUL, and a complete result.
+The loader verifies the command-required adapter operations before reading the
+selected credential. Upload defaults to value-free inspection; apply validates
+exact operation, ID, name, value, organization, and project membership from
+read-back before claiming success. The adapter remains trusted same-user code,
+not a sandbox.
 
 ## Filesystem guarantees and limits
 
@@ -88,6 +92,12 @@ stale/legacy entries, but multiple stores/files are not a single transaction.
 Review explicit secret-to-variable classification before allowing public storage.
 Full restore preserves template directives and appends extra keys without new
 directives; review output before further synchronization.
+
+Bitwarden upload creates nothing by default. `--apply` authorizes missing-name
+creates; `--update-existing` additionally selects exact-name updates. It never
+deletes remote entries. A batch is not a transaction: an adapter failure may
+follow one or more remote writes, so gh-vault reports uncertain remote state and
+requires a fresh preview instead of claiming rollback or completion.
 
 ## Evidence
 

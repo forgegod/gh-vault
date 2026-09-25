@@ -21,7 +21,7 @@ executable evidence. [README](../README.md) is the operator command guide;
 | --- | --- | --- |
 | `src/gh_vault/cli.py` | Argparse commands, dispatch, output, exit handling, process handoff | TTY/stdin, stdout/stderr, exec |
 | `src/gh_vault/store.py` | Token metadata, vault backend, public environment store | `pass`, restrictive JSON files |
-| `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project/environment-result validation | Operator bws config and local `gh_vault_bws` checkout |
+| `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project/environment inspection, read, and verified write-result validation | Operator bws config and local `gh_vault_bws` checkout |
 | `src/gh_vault/github.py` | Token scope/expiration inspection | HTTPS GET to GitHub user API |
 | `src/gh_vault/envfiles.py` | Dotenv syntax, origin identity, archive/restore/migration | Git origin lookup, explicit file inputs |
 | `src/gh_vault/actions.py` | Actions selection, sync/check/import, act execution, workflow scanning | `gh`, act child, local workflow files |
@@ -42,6 +42,9 @@ not a blanket catch for every OS error or malformed input.
    recovery parses one explicit template first, retrieves exactly its managed
    keys, validates every returned entry's ID/organization/project membership,
    then atomically replaces the private target without a local-archive fallback.
+   Upload parses one explicit dotenv first, previews exact-name creates and
+   optional updates, performs writes only with `--apply`, and accepts success only
+   after exact in-process read-back validation. It never deletes remote entries.
 3. Typed dotenv directives explicitly select secret/variable values. Runtime
    profile references resolve in-process for consumers with a vault store.
    `env run`/`run` inherit the parent environment and replace the current process.

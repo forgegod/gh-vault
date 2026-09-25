@@ -130,8 +130,9 @@ empty configuration. Do not infer requiredness from example values.
 
 ## Proposed integration checklist
 
-These approved choices define later implementation work, not current CLI help or
-implemented behavior.
+These approved choices define the integration boundary. Current implemented
+behavior belongs to the affected CAPs and operator README; later phases remain
+change-record scope rather than claims in this review package.
 
 | Topic | Proposed boundary |
 | --- | --- |

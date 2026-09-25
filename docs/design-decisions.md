@@ -64,6 +64,12 @@ template and accepts structured values only after entry, organization, and
 project validation. It does not cache UUIDs, infer a target from the filename,
 or fall back to the local archive. Local-only assignments remain inactive.
 
+Upload is a separate directional operation from one explicit dotenv. Inspection
+is the default; `--apply` authorizes creates and `--update-existing` explicitly
+selects updates. The public boundary validates normalized read-back data but keeps
+SDK calls in the private adapter. No delete, automatic synchronization, or
+cross-entry transaction is implied.
+
 ## Separate current behavior, progress, and rationale
 
 CAPs state behavior with executable evidence. An active CHG carries material

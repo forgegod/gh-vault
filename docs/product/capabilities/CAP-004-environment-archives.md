@@ -12,13 +12,14 @@
 - Full restore refuses an existing target unless forced, merges values onto the local template or archived fallback, preserves unmatched template text, and appends archived keys missing from the template. `--restore-example` additionally writes the archived template when available.
 - `env restore --key NAME` appends or creates just that archived key with a synthetic type directive. It validates the key, rejects `--restore-example`, and does not require `--force`.
 - `bitwarden env restore` is a separate fresh-clone path: it uses the local template plus one explicit connection/project/adapter, requires all managed keys, and never reads or falls back to an archive. It refuses overwrite unless forced and installs the fully validated result through a private adjacent file and atomic replacement.
+- `bitwarden env upload` is a separate directional path from one explicit local dotenv to one explicit project. It previews exact-name creates and optional updates without values; `--apply` authorizes creates and `--update-existing` explicitly includes updates. It never reads or changes the local archive and never deletes remote entries.
 
 ## Implementation
 
 - `src/gh_vault/envfiles.py` — project_namespace, archive_environment, restore_environment, render_template, list_environments, show_environment.
-- `src/gh_vault/bitwarden.py` — structured exact-project environment retrieval validation.
+- `src/gh_vault/bitwarden.py` — structured exact-project environment inspection, retrieval, and verified write-result validation.
 - `src/gh_vault/store.py` — EnvironmentStore and restrictive JSON persistence.
-- `src/gh_vault/cli.py` — local/archive and Bitwarden environment dispatch plus repeatable archive selection.
+- `src/gh_vault/cli.py` — local/archive and Bitwarden restore/upload dispatch plus repeatable archive selection.
 
 ## Rules and boundaries
 
@@ -27,6 +28,7 @@
 - The origin string is exact even if two origin spellings normalize to the same namespace. Archive operations spanning the public store and `pass` are not a cross-store transaction. Normal commands do not fall back to monolithic legacy archives.
 - Restored files finish with `0600` mode, but their writer is write-then-chmod, not atomic replacement. See the security contract.
 - The preceding write-then-chmod limit applies to local archive restore. Bitwarden recovery uses private-from-creation atomic replacement, validates all remote values first, and leaves an existing target intact on failure.
+- Bitwarden upload is not a multi-entry transaction. A failed apply reports that remote state may have changed and requires a fresh preview; reruns inspect exact names so completed creates are not recreated unless the operator explicitly selects updates.
 
 ## Verification
 
@@ -34,6 +36,7 @@
 - `tests/test_vault_features.py` — `test_variable_only_archive_and_show_never_use_the_vault`, `test_archive_type_transitions_remove_stale_payloads`, `test_list_and_restore_do_not_fallback_to_legacy_default_archive`, `test_archive_environment_rejects_profile_references`, `test_restore_environment_preserves_profile_reference_directive`, and the `test_restore_with_key_*` family assert isolation and restore boundaries.
 - `tests/test_store.py` — `test_environment_store_separates_variable_payload_and_manifest`, `test_environment_store_validates_payload_origin_and_data`, `test_environment_store_rejects_invalid_paths_and_manifest_details`, and `test_environment_store_removes_only_the_selected_payload` assert public persistence and modes.
 - `tests/test_bitwarden_environments.py` — `test_bitwarden_restore_recreates_fresh_environment_from_declared_keys`, `test_restore_refuses_existing_target_before_remote_access`, `test_restore_keeps_forced_target_when_remote_validation_fails`, and `test_atomic_restore_keeps_old_target_when_replace_fails` prove fresh-checkout reconstruction and replacement boundaries with a fake adapter.
+- `tests/test_bitwarden_environments.py` — `test_bitwarden_upload_rerun_skips_existing_entry_without_creating_duplicate`, `test_bitwarden_upload_round_trips_into_a_second_synthetic_checkout`, and the `test_write_environment_*` cases prove directional round trips, rerun safety, and exact write read-back validation with a fake adapter.
 - Run `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py tests/test_store.py`.
 - These tests do not prove crash recovery across stores, real GPG encryption, or live Bitwarden behavior.
 

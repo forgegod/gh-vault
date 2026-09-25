@@ -117,6 +117,7 @@ def test_add_command_is_removed() -> None:
         (["bitwarden", "credential", "remove", "--help"], "Remove a Bitwarden access token"),
         (["bitwarden", "project", "resolve", "--help"], "Resolve one explicit Bitwarden project UUID"),
         (["bitwarden", "env", "restore", "--help"], "Recreate .env from its template"),
+        (["bitwarden", "env", "upload", "--help"], "Preview exact-name creates and updates"),
         (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
@@ -379,6 +380,24 @@ def test_bitwarden_parser_requires_explicit_connection_project_and_adapter() -> 
     assert args.project_id == "22222222-2222-4222-8222-222222222222"
     assert args.adapter_path == Path("/operator/gh-vault-bws")
     assert args.credential_source == "env"
+
+    upload = cli.build_parser().parse_args(
+        [
+            "bitwarden",
+            "env",
+            "upload",
+            "--connection",
+            "eu-production",
+            "--project-id",
+            "22222222-2222-4222-8222-222222222222",
+            "--adapter-path",
+            "/operator/gh-vault-bws",
+            "--update-existing",
+        ]
+    )
+    assert upload.bitwarden_env_command == "upload"
+    assert upload.apply is False
+    assert upload.update_existing is True
 
 
 @pytest.mark.parametrize(

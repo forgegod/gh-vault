@@ -69,7 +69,7 @@ than a profile-private plan.
 
 ## Current records
 
-- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 3 completed exact-name fresh-clone dotenv recovery through the local adapter; Phase 4 is pending.
+- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 4 completed previewed, explicitly authorized Bitwarden upload through the local adapter; Phase 5 is pending.
 
 ## Archive
 

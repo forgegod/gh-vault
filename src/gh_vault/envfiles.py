@@ -45,6 +45,12 @@ class BitwardenRestorePlan:
     force: bool
 
 
+@dataclass(frozen=True)
+class BitwardenUploadPlan:
+    source: Path
+    entries: tuple[DotenvAssignment, ...]
+
+
 def project_namespace(directory: Path) -> tuple[str, str]:
     result = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=directory, text=True, capture_output=True, check=False)
     origin = result.stdout.strip()
@@ -318,6 +324,23 @@ def apply_bitwarden_restore(
     if plan.target.exists() and not plan.force:
         raise StoreError(f"refusing to overwrite {plan.target}; use --force")
     _replace_private(plan.target, render_template(plan.template, values))
+
+
+def prepare_bitwarden_upload(env_file: Path) -> BitwardenUploadPlan:
+    environment_profile(env_file)
+    assignments = parse_typed_dotenv(env_file)
+    managed = tuple(entry for entry in assignments if entry.kind != "local")
+    for entry in managed:
+        if entry.profile is not None:
+            raise StoreError(
+                f"{entry.key} at {env_file}:{entry.line} references vault profile "
+                f"'{entry.profile}'; profile references cannot be uploaded to Bitwarden"
+            )
+        if "\0" in entry.value:
+            raise StoreError(f"Bitwarden upload value for {entry.key} contains NUL")
+    if not managed:
+        raise StoreError(f"Bitwarden upload source has no managed declarations: {env_file}")
+    return BitwardenUploadPlan(env_file, managed)
 
 
 def archive_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> str:

@@ -20,16 +20,16 @@ storage, and an explicit project ID for the initial scope instead of incomplete
 project-name listing or a mandatory repository TOML binding file.
 
 This record is the sole phased plan, not a claim of fully implemented support.
-Phases 1–3 are complete at verified checkpoints. Later phases remain pending,
+Phases 1–4 are complete at verified checkpoints. Later phases remain pending,
 and the record is blocked between phases until another execution cycle is
 selected. No commit, push, release, live credential access, or remote write is
 authorized by this plan.
 
 The operator explicitly approved the narrow Bitwarden extension and local-path
-split in Phase 1. Phases 2–3 implement connection metadata, optional encrypted
-credential storage, the explicit local loader, project-result validation, and
-fresh-clone dotenv recovery from a compatible adapter. Upload and Actions
-delivery remain unimplemented.
+split in Phase 1. Phases 2–4 implement connection metadata, optional encrypted
+credential storage, the explicit local loader, project/result validation,
+fresh-clone dotenv recovery, and previewed explicit upload through a compatible
+adapter. Actions delivery remains unimplemented.
 
 ## SDK license boundary
 
@@ -228,7 +228,7 @@ DOX, README/security contracts where applicable, and this record together.
 | 1 | Resolve integration contracts and approval | done (`make verify`: 206 Python tests, 82 Node tests, record validation; operator decisions recorded) | `make records-check` exits 0; integration-contract checklist below is resolved and explicitly approved |
 | 2 | Operator connection and project discovery | done (143 focused tests; record validation; `make verify`: 238 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0 |
 | 3 | Fresh-clone dotenv recovery | done (102 focused tests; `make verify`: 256 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py` exits 0; `make records-check` exits 0 |
-| 4 | Explicit upload to Bitwarden | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
+| 4 | Explicit upload to Bitwarden | done (55 focused tests; `make verify`: 275 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
 | 5 | Publish GitHub standby values | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
 | 6 | Dual-provider Actions and offline diagnostics | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
 | 7 | Integrate recovery evidence and current-state records | pending | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
@@ -395,6 +395,21 @@ Bitwarden call, SDK import, remote write, commit, or push occurred.
 
 **Verification gate:** `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0.
 
+**Completion evidence:** `bitwarden env upload` preflights one explicit dotenv,
+connection, project, adapter path, required adapter operations, and credential
+source. The default value-free preview classifies exact-name creates, updates,
+and unchanged entries; `--apply` authorizes creates and `--update-existing`
+explicitly includes updates. Upload resolves explicit transport markers, preserves
+quoted literal markers, excludes local-only declarations, rejects profile
+references/NUL, and validates exact operation, ID, key, value, organization, and
+project membership from adapter read-back. Synthetic tests cover duplicate names,
+read-only/update failures, wrong targets, incomplete or changed read-back, hostile
+adapter text, trailing newlines, empty values, partial-failure reporting, rerun
+deduplication, and upload/restore across separate temporary checkouts. The focused
+gate passes (55 tests); `make records-check` and `make verify` pass (275 Python
+tests and 82 Node tests). No live Bitwarden call, SDK import, private-sibling
+implementation, remote write, commit, or push occurred.
+
 ## Phase 5 — Publish GitHub standby values
 
 **Goal:** Keep a reviewed GitHub copy usable independently of Bitwarden at runtime.
@@ -499,10 +514,10 @@ Bitwarden delivery and independent GitHub rollback.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phases 1–3 complete and four later rows pending.
+package. The phase table records Phases 1–4 complete and three later rows pending.
 CAP-001–CAP-004, root/child DOX, README, architecture, security, and design
 decisions describe the implemented local connection, project, and environment
-recovery boundary. They do not claim upload, Actions delivery, live service
+recovery/upload boundary. They do not claim Actions delivery, live service
 behavior, or SDK implementation in this repository.
 
 Public references inform the concept; recheck supported versions in Phase 1:
@@ -516,5 +531,5 @@ Public references inform the concept; recheck supported versions in Phase 1:
 
 Resume with the repository-local
 [phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Phase 3 is complete and the record is blocked between phases;
-select Phase 4 in a new execution cycle before changing its implementation scope.
+and this record. Phase 4 is complete and the record is blocked between phases;
+select Phase 5 in a new execution cycle before changing its implementation scope.

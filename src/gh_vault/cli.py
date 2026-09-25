@@ -10,8 +10,8 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, remote_secret_status, run_act, runtime_environment, suggested_env, sync
-from .bitwarden import assert_connection_current, default_bws_config, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, reject_bws_overrides, resolve_project
-from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_restore, project_namespace, restore_environment, show_environment
+from .bitwarden import BitwardenWrite, assert_connection_current, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, reject_bws_overrides, resolve_project, write_environment
+from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
 from .store import BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
 
@@ -94,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     project_resolve.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
     project_resolve.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
     project_resolve.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
-    bitwarden_env = bitwarden.add_parser("env", help="restore declared environments from Bitwarden", description="Restore declared managed values from one explicit Bitwarden project.").add_subparsers(dest="bitwarden_env_command", required=True)
+    bitwarden_env = bitwarden.add_parser("env", help="restore or upload declared Bitwarden environments", description="Restore or explicitly upload declared managed values for one Bitwarden project.").add_subparsers(dest="bitwarden_env_command", required=True)
     bitwarden_restore = bitwarden_env.add_parser("restore", help="restore a declared environment", description="Recreate .env from its template and exact-name values in one explicit Bitwarden project.")
     bitwarden_restore.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
     bitwarden_restore.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
@@ -103,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_restore.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to restore")
     bitwarden_restore.add_argument("--example-file", type=Path, help="template path; defaults to the matching .env.example variant")
     bitwarden_restore.add_argument("--force", action="store_true", help="atomically replace an existing environment file")
+    bitwarden_upload = bitwarden_env.add_parser("upload", help="preview or upload a declared environment", description="Preview exact-name creates and updates, then explicitly upload managed .env values to one Bitwarden project.")
+    bitwarden_upload.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
+    bitwarden_upload.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
+    bitwarden_upload.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_upload.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bitwarden_upload.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to upload")
+    bitwarden_upload.add_argument("--apply", action="store_true", help="perform the previewed creates and selected updates")
+    bitwarden_upload.add_argument("--update-existing", action="store_true", help="include exact-name existing entries as updates in the preview or apply")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
@@ -222,29 +230,113 @@ def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: 
         return 0
 
     if args.bitwarden_command == "env":
-        example_file = args.example_file or example_file_for(args.env_file)
-        plan = prepare_bitwarden_restore(
-            args.env_file,
-            example_file,
-            force=args.force,
-        )
+        restore_plan = None
+        upload_plan = None
+        if args.bitwarden_env_command == "restore":
+            example_file = args.example_file or example_file_for(args.env_file)
+            restore_plan = prepare_bitwarden_restore(
+                args.env_file,
+                example_file,
+                force=args.force,
+            )
+        else:
+            upload_plan = prepare_bitwarden_upload(args.env_file)
         connection = store.get_bitwarden_connection(args.connection)
         project_namespace(directory)
         assert_connection_current(connection)
         reject_bws_overrides()
-        access_token = _selected_bitwarden_token(args, store)
-        adapter = load_local_adapter(args.adapter_path)
-        values = read_environment(
+        required_operations = (
+            ("read_environment",)
+            if args.bitwarden_env_command == "restore"
+            else (
+                ("inspect_environment", "write_environment")
+                if args.apply
+                else ("inspect_environment",)
+            )
+        )
+        adapter = load_local_adapter(
+            args.adapter_path,
+            required_operations=required_operations,
+        )
+        try:
+            access_token = _selected_bitwarden_token(args, store)
+        except Exception:
+            adapter.close()
+            raise
+        if args.bitwarden_env_command == "restore":
+            assert restore_plan is not None
+            values = read_environment(
+                adapter,
+                connection,
+                access_token,
+                args.project_id,
+                restore_plan.keys,
+            )
+            apply_bitwarden_restore(restore_plan, values)
+            print(
+                f"Restored {len(values)} managed value(s) to {args.env_file} "
+                f"from Bitwarden project {args.project_id}."
+            )
+            return 0
+
+        assert upload_plan is not None
+        existing = inspect_environment(
             adapter,
             connection,
             access_token,
             args.project_id,
-            plan.keys,
+            tuple(entry.key for entry in upload_plan.entries),
         )
-        apply_bitwarden_restore(plan, values)
+        writes: list[BitwardenWrite] = []
+        skipped = 0
+        for entry in upload_plan.entries:
+            entry_id = existing.get(entry.key)
+            if entry_id is not None and not args.update_existing:
+                skipped += 1
+                if not args.apply:
+                    print(
+                        f"Would leave existing {entry.kind} {entry.key} unchanged in "
+                        f"Bitwarden project {args.project_id}."
+                    )
+                continue
+            writes.append(BitwardenWrite(entry.key, entry.value, entry_id))
+            if not args.apply:
+                operation = "update" if entry_id is not None else "create"
+                print(
+                    f"Would {operation} {entry.kind} {entry.key} in "
+                    f"Bitwarden project {args.project_id}."
+                )
+        creates = sum(write.entry_id is None for write in writes)
+        updates = len(writes) - creates
+        if not args.apply:
+            print(
+                f"Previewed {len(upload_plan.entries)} managed value(s): {creates} create(s), "
+                f"{updates} update(s), {skipped} existing value(s) unchanged."
+            )
+            return 0
+        if not writes:
+            print(
+                f"No Bitwarden writes required for project {args.project_id}; "
+                f"{skipped} existing value(s) left unchanged."
+            )
+            return 0
+        write_adapter = load_local_adapter(
+            args.adapter_path,
+            required_operations=("write_environment",),
+        )
+        results = write_environment(
+            write_adapter,
+            connection,
+            access_token,
+            args.project_id,
+            tuple(writes),
+        )
+        created = sum(result.operation == "create" for result in results)
+        updated = len(results) - created
         print(
-            f"Restored {len(values)} managed value(s) to {args.env_file} "
-            f"from Bitwarden project {args.project_id}."
+            f"Uploaded {len(results)} managed value(s) to Bitwarden project "
+            f"{args.project_id}: {created} created, {updated} updated; "
+            f"{skipped} existing value(s) left unchanged."
         )
         return 0
 

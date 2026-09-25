@@ -69,7 +69,7 @@ than a profile-private plan.
 
 ## Current records
 
-No change record is active.
+- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked in Phase 1; an open-source SDK-using application is outside the SDK license, and the local-path split plus the backend non-goal extension still need explicit approval.
 
 ## Archive
 

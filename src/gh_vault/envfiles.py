@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,6 +35,14 @@ class ArchiveMigrationResult:
     variables: int
     secrets: int
     local: int
+
+
+@dataclass(frozen=True)
+class BitwardenRestorePlan:
+    target: Path
+    template: str
+    keys: tuple[str, ...]
+    force: bool
 
 
 def project_namespace(directory: Path) -> tuple[str, str]:
@@ -69,7 +79,12 @@ def parse_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[DotenvAssignment, ...]:
+def parse_typed_dotenv(
+    path: Path,
+    *,
+    include_commented: bool = False,
+    resolve_transport: bool = True,
+) -> tuple[DotenvAssignment, ...]:
     assignments: list[DotenvAssignment] = []
     seen: set[str] = set()
     pending: tuple[Literal["secret", "variable"], str | None, int] | None = None
@@ -77,7 +92,13 @@ def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[
     for number, line in enumerate(_read_dotenv_lines(path), 1):
         stripped = line.strip()
         if pending is not None:
-            parsed = _parse_assignment(line, path, number, include_commented=include_commented)
+            parsed = _parse_assignment(
+                line,
+                path,
+                number,
+                include_commented=include_commented,
+                resolve_transport=resolve_transport,
+            )
             if parsed is None:
                 raise StoreError(f"gh-vault directive must be followed immediately by an assignment at {path}:{pending[2]}")
             key, value, commented = parsed
@@ -96,7 +117,13 @@ def parse_typed_dotenv(path: Path, *, include_commented: bool = False) -> tuple[
             if not include_commented:
                 continue
 
-        parsed = _parse_assignment(line, path, number, include_commented=include_commented)
+        parsed = _parse_assignment(
+            line,
+            path,
+            number,
+            include_commented=include_commented,
+            resolve_transport=resolve_transport,
+        )
         if parsed is None:
             continue
         key, value, commented = parsed
@@ -132,7 +159,14 @@ def _read_dotenv_lines(path: Path) -> list[str]:
         raise StoreError(f"cannot read {path}: {exc}") from exc
 
 
-def _parse_assignment(line: str, path: Path, number: int, *, include_commented: bool) -> tuple[str, str, bool] | None:
+def _parse_assignment(
+    line: str,
+    path: Path,
+    number: int,
+    *,
+    include_commented: bool,
+    resolve_transport: bool = True,
+) -> tuple[str, str, bool] | None:
     stripped = line.strip()
     if not stripped:
         return None
@@ -151,7 +185,13 @@ def _parse_assignment(line: str, path: Path, number: int, *, include_commented: 
         if commented:
             return None
         raise StoreError(f"unsupported dotenv syntax at {path}:{number}")
-    return key, _decode(raw.strip(), path.parent, path, number), commented
+    return key, _decode(
+        raw.strip(),
+        path.parent,
+        path,
+        number,
+        resolve_transport=resolve_transport,
+    ), commented
 
 
 def _append_typed_assignment(
@@ -173,8 +213,15 @@ def _append_typed_assignment(
     assignments.append(DotenvAssignment(key, value, kind, number, commented, profile))
 
 
-def _decode(value: str, parent: Path, path: Path, number: int) -> str:
-    if value.startswith("@file:"):
+def _decode(
+    value: str,
+    parent: Path,
+    path: Path,
+    number: int,
+    *,
+    resolve_transport: bool = True,
+) -> str:
+    if resolve_transport and value.startswith("@file:"):
         source = Path(value[6:]).expanduser()
         if not source.is_absolute():
             source = parent / source
@@ -182,7 +229,7 @@ def _decode(value: str, parent: Path, path: Path, number: int) -> str:
             return source.read_text(encoding="utf-8")
         except OSError as exc:
             raise StoreError(f"cannot read @file at {path}:{number}: {exc}") from exc
-    if value.startswith("@base64:"):
+    if resolve_transport and value.startswith("@base64:"):
         try:
             return base64.b64decode(value[8:], validate=True).decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
@@ -207,9 +254,70 @@ def _decode(value: str, parent: Path, path: Path, number: int) -> str:
 def format_dotenv_value(value: str) -> str:
     if "\n" in value:
         return "@base64:" + base64.b64encode(value.encode()).decode()
+    if value.startswith(("@file:", "@base64:")):
+        return json.dumps(value, ensure_ascii=False)
     if re.fullmatch(r"[A-Za-z0-9_./:@%+=,-]*", value):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+def prepare_bitwarden_restore(
+    env_file: Path,
+    example_file: Path,
+    *,
+    force: bool,
+) -> BitwardenRestorePlan:
+    environment_profile(env_file)
+    try:
+        template = example_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise StoreError(f"cannot read {example_file}: {exc}") from exc
+    assignments = parse_typed_dotenv(
+        example_file,
+        include_commented=True,
+        resolve_transport=False,
+    )
+    for entry in assignments:
+        if entry.profile is not None:
+            raise StoreError(
+                f"{entry.key} at {example_file}:{entry.line} references vault profile "
+                f"'{entry.profile}'; profile references cannot be restored from Bitwarden"
+            )
+    keys = tuple(entry.key for entry in assignments if entry.kind != "local")
+    if not keys:
+        raise StoreError(f"Bitwarden restore template has no managed declarations: {example_file}")
+    if env_file.exists() and not force:
+        raise StoreError(f"refusing to overwrite {env_file}; use --force")
+    template = _deactivate_local_assignments(template, assignments)
+    return BitwardenRestorePlan(env_file, template, keys, force)
+
+
+def _deactivate_local_assignments(
+    template: str,
+    assignments: tuple[DotenvAssignment, ...],
+) -> str:
+    lines = template.splitlines(keepends=True)
+    for entry in assignments:
+        if entry.kind != "local" or entry.commented:
+            continue
+        index = entry.line - 1
+        line = lines[index]
+        indentation = line[: len(line) - len(line.lstrip())]
+        lines[index] = f"{indentation}# {line[len(indentation):]}"
+    return "".join(lines)
+
+
+def apply_bitwarden_restore(
+    plan: BitwardenRestorePlan,
+    values: dict[str, str],
+) -> None:
+    if set(values) != set(plan.keys):
+        raise StoreError("Bitwarden environment values do not match the restore plan")
+    if any(not isinstance(value, str) or "\0" in value for value in values.values()):
+        raise StoreError("Bitwarden environment values contain invalid data")
+    if plan.target.exists() and not plan.force:
+        raise StoreError(f"refusing to overwrite {plan.target}; use --force")
+    _replace_private(plan.target, render_template(plan.template, values))
 
 
 def archive_environment(store: VaultStore, environment_store: EnvironmentStore, directory: Path, env_file: Path, example_file: Path) -> str:
@@ -480,3 +588,28 @@ def _write_private(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     path.chmod(0o600)
+
+
+def _replace_private(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            dir=path.parent,
+        )
+    except OSError as exc:
+        raise StoreError(f"cannot create private replacement for {path}: {exc}") from exc
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        raise StoreError(f"cannot replace {path}: {exc}") from None
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass

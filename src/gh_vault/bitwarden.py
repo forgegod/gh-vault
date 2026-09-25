@@ -36,10 +36,16 @@ class BitwardenProject:
 @dataclass
 class LocalBitwardenAdapter:
     resolve: Callable[..., object]
+    reader: Callable[..., object] | None
     previous_modules: dict[str, ModuleType]
 
     def __call__(self, **request: object) -> object:
         return self.resolve(**request)
+
+    def read_environment(self, **request: object) -> object:
+        if self.reader is None:
+            raise StoreError("Bitwarden local adapter does not implement read_environment")
+        return self.reader(**request)
 
     def close(self) -> None:
         for name in tuple(sys.modules):
@@ -222,7 +228,10 @@ def load_local_adapter(path: Path) -> LocalBitwardenAdapter:
         resolver = getattr(module, "resolve_project", None)
         if not callable(resolver):
             raise StoreError("Bitwarden local adapter does not implement resolve_project")
-        return LocalBitwardenAdapter(resolver, previous_modules)
+        reader = getattr(module, "read_environment", None)
+        if reader is not None and not callable(reader):
+            raise StoreError("Bitwarden local adapter has an invalid read_environment operation")
+        return LocalBitwardenAdapter(resolver, reader, previous_modules)
     except StoreError:
         _clear_adapter_modules()
         sys.modules.update(previous_modules)
@@ -250,9 +259,9 @@ def resolve_project(
     access_token: str,
     project_id: str,
 ) -> BitwardenProject:
-    if not access_token or "\n" in access_token or "\r" in access_token:
-        raise StoreError("Bitwarden access token must be a non-empty single line")
     try:
+        if not access_token or "\n" in access_token or "\r" in access_token:
+            raise StoreError("Bitwarden access token must be a non-empty single line")
         with tempfile.TemporaryDirectory(prefix="gh-vault-bws-") as state_dir:
             os.chmod(state_dir, 0o700)
             state_file = str(Path(state_dir) / "state")
@@ -287,3 +296,105 @@ def resolve_project(
     if returned_project != project_id:
         raise StoreError("Bitwarden adapter returned a different project")
     return BitwardenProject(returned_project, returned_organization)
+
+
+def read_environment(
+    adapter: object,
+    connection: BitwardenConnection,
+    access_token: str,
+    project_id: str,
+    keys: tuple[str, ...],
+) -> dict[str, str]:
+    reader = getattr(adapter, "read_environment", None)
+    try:
+        if not access_token or "\n" in access_token or "\r" in access_token:
+            raise StoreError("Bitwarden access token must be a non-empty single line")
+        if not keys or len(keys) != len(set(keys)):
+            raise StoreError("Bitwarden environment request contains invalid keys")
+        if not callable(reader):
+            raise StoreError("Bitwarden local adapter does not implement read_environment")
+        with tempfile.TemporaryDirectory(prefix="gh-vault-bws-") as state_dir:
+            os.chmod(state_dir, 0o700)
+            state_file = str(Path(state_dir) / "state")
+            try:
+                with io.StringIO() as stdout, io.StringIO() as stderr:
+                    from contextlib import redirect_stderr, redirect_stdout
+
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        response = reader(
+                            api_url=connection.api_url,
+                            identity_url=connection.identity_url,
+                            access_token=access_token,
+                            organization_id=connection.organization_id,
+                            project_id=project_id,
+                            keys=keys,
+                            state_file=state_file,
+                        )
+            except Exception:
+                raise StoreError("Bitwarden environment retrieval failed") from None
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
+
+    if not isinstance(response, dict) or set(response) != {
+        "project_id",
+        "organization_id",
+        "entries",
+    }:
+        raise StoreError("Bitwarden adapter returned an invalid environment response")
+    returned_project = _response_uuid(response["project_id"], "project")
+    returned_organization = _response_uuid(response["organization_id"], "organization")
+    if returned_organization != connection.organization_id:
+        raise StoreError("Bitwarden adapter returned an environment outside the configured organization")
+    if returned_project != project_id:
+        raise StoreError("Bitwarden adapter returned an environment for a different project")
+    entries = response["entries"]
+    if not isinstance(entries, list):
+        raise StoreError("Bitwarden adapter returned an invalid environment response")
+
+    requested = set(keys)
+    seen_ids: set[str] = set()
+    values: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {
+            "id",
+            "key",
+            "value",
+            "organization_id",
+            "project_ids",
+        }:
+            raise StoreError("Bitwarden adapter returned an invalid environment entry")
+        entry_id = _response_uuid(entry["id"], "secret")
+        if entry_id in seen_ids:
+            raise StoreError("Bitwarden adapter returned a duplicate entry ID")
+        seen_ids.add(entry_id)
+        key = entry["key"]
+        if not isinstance(key, str):
+            raise StoreError("Bitwarden adapter returned an invalid environment entry")
+        if key in values:
+            raise StoreError(f"Bitwarden adapter returned duplicate key {key}")
+        if key not in requested:
+            raise StoreError(f"Bitwarden adapter returned undeclared key {key}")
+        organization_id = _response_uuid(entry["organization_id"], "organization")
+        if organization_id != connection.organization_id:
+            raise StoreError("Bitwarden adapter returned an entry outside the configured organization")
+        project_ids = entry["project_ids"]
+        if not isinstance(project_ids, list):
+            raise StoreError("Bitwarden adapter returned an invalid environment entry")
+        normalized_projects = {
+            _response_uuid(value, "project") for value in project_ids
+        }
+        if project_id not in normalized_projects:
+            raise StoreError("Bitwarden adapter returned an entry outside the selected project")
+        value = entry["value"]
+        if not isinstance(value, str):
+            raise StoreError("Bitwarden adapter returned an invalid environment entry")
+        if "\0" in value:
+            raise StoreError(f"Bitwarden value for {key} contains NUL")
+        values[key] = value
+
+    missing = [key for key in keys if key not in values]
+    if missing:
+        raise StoreError("Bitwarden environment is missing declared key(s): " + ", ".join(missing))
+    return {key: values[key] for key in keys}

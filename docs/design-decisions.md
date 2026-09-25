@@ -59,6 +59,11 @@ profile/server overrides, so an access token is never probed against an implicit
 or drifted region. Environment and encrypted-vault credential sources are
 explicit and mutually non-fallback.
 
+Fresh-clone recovery derives required exact names only from an explicit local
+template and accepts structured values only after entry, organization, and
+project validation. It does not cache UUIDs, infer a target from the filename,
+or fall back to the local archive. Local-only assignments remain inactive.
+
 ## Separate current behavior, progress, and rationale
 
 CAPs state behavior with executable evidence. An active CHG carries material

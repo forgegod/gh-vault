@@ -10,8 +10,8 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, remote_secret_status, run_act, runtime_environment, suggested_env, sync
-from .bitwarden import assert_connection_current, default_bws_config, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, reject_bws_overrides, resolve_project
-from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, project_namespace, restore_environment, show_environment
+from .bitwarden import assert_connection_current, default_bws_config, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, reject_bws_overrides, resolve_project
+from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_restore, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
 from .store import BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
 
@@ -94,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     project_resolve.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
     project_resolve.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
     project_resolve.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bitwarden_env = bitwarden.add_parser("env", help="restore declared environments from Bitwarden", description="Restore declared managed values from one explicit Bitwarden project.").add_subparsers(dest="bitwarden_env_command", required=True)
+    bitwarden_restore = bitwarden_env.add_parser("restore", help="restore a declared environment", description="Recreate .env from its template and exact-name values in one explicit Bitwarden project.")
+    bitwarden_restore.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
+    bitwarden_restore.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
+    bitwarden_restore.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_restore.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bitwarden_restore.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to restore")
+    bitwarden_restore.add_argument("--example-file", type=Path, help="template path; defaults to the matching .env.example variant")
+    bitwarden_restore.add_argument("--force", action="store_true", help="atomically replace an existing environment file")
 
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
@@ -160,6 +169,18 @@ def _read_bitwarden_token(use_stdin: bool) -> str:
     return token
 
 
+def _selected_bitwarden_token(args: argparse.Namespace, store: VaultStore) -> str:
+    if args.credential_source == "env":
+        access_token = os.environ.get("BWS_ACCESS_TOKEN", "")
+        if not access_token:
+            raise StoreError("BWS_ACCESS_TOKEN is required for --credential-source env")
+    else:
+        access_token = store.get_bitwarden_credential(args.connection)
+    if "\n" in access_token or "\r" in access_token:
+        raise StoreError("Bitwarden access token must be a non-empty single line")
+    return access_token
+
+
 def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: Path) -> int:
     if args.bitwarden_command == "connection":
         if args.connection_command == "set":
@@ -200,25 +221,40 @@ def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: 
             print(f"Removed Bitwarden credential: {args.connection}")
         return 0
 
+    if args.bitwarden_command == "env":
+        example_file = args.example_file or example_file_for(args.env_file)
+        plan = prepare_bitwarden_restore(
+            args.env_file,
+            example_file,
+            force=args.force,
+        )
+        connection = store.get_bitwarden_connection(args.connection)
+        project_namespace(directory)
+        assert_connection_current(connection)
+        reject_bws_overrides()
+        access_token = _selected_bitwarden_token(args, store)
+        adapter = load_local_adapter(args.adapter_path)
+        values = read_environment(
+            adapter,
+            connection,
+            access_token,
+            args.project_id,
+            plan.keys,
+        )
+        apply_bitwarden_restore(plan, values)
+        print(
+            f"Restored {len(values)} managed value(s) to {args.env_file} "
+            f"from Bitwarden project {args.project_id}."
+        )
+        return 0
+
     connection = store.get_bitwarden_connection(args.connection)
     project_namespace(directory)
     assert_connection_current(connection)
     reject_bws_overrides()
+    access_token = _selected_bitwarden_token(args, store)
     adapter = load_local_adapter(args.adapter_path)
-    try:
-        if args.credential_source == "env":
-            access_token = os.environ.get("BWS_ACCESS_TOKEN", "")
-            if not access_token:
-                raise StoreError(
-                    "BWS_ACCESS_TOKEN is required for --credential-source env"
-                )
-        else:
-            access_token = store.get_bitwarden_credential(connection.name)
-        project = resolve_project(adapter, connection, access_token, args.project_id)
-    finally:
-        close = getattr(adapter, "close", None)
-        if callable(close):
-            close()
+    project = resolve_project(adapter, connection, access_token, args.project_id)
     print(
         f"Resolved Bitwarden project {project.project_id} "
         f"for connection {connection.name}."

@@ -116,6 +116,7 @@ def test_add_command_is_removed() -> None:
         (["bitwarden", "credential", "set", "--help"], "Store a Bitwarden access token"),
         (["bitwarden", "credential", "remove", "--help"], "Remove a Bitwarden access token"),
         (["bitwarden", "project", "resolve", "--help"], "Resolve one explicit Bitwarden project UUID"),
+        (["bitwarden", "env", "restore", "--help"], "Recreate .env from its template"),
         (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),

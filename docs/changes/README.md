@@ -69,7 +69,7 @@ than a profile-private plan.
 
 ## Current records
 
-- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 1 approved the local-path split, explicit project-ID initial scope, and pinned action trust boundary; Phase 2 is not selected.
+- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 2 completed the local-path connection, credential, and explicit project-ID discovery boundary; Phase 3 is pending.
 
 ## Archive
 

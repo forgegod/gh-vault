@@ -7,12 +7,13 @@
   <a href="https://pypi.org/project/forgegod-gh-vault/"><img src="https://img.shields.io/pypi/v/forgegod-gh-vault?logo=pypi&label=PyPI" alt="PyPI"></a>
 </p>
 
-`gh-vault` keeps named GitHub tokens and secret project values in GPG-encrypted `pass` entries while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, and checks workflow wiring. Secret values never enter public metadata or ordinary command output.
+`gh-vault` keeps named GitHub tokens and secret project values in GPG-encrypted `pass` entries while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, checks workflow wiring, and resolves explicitly configured Bitwarden projects through an operator-held local adapter. Secret values never enter public metadata or ordinary command output.
 
 ## Requirements
 
 - Linux, Python 3.10+, `pass`, and GPG
 - `gh` authenticated with access to the target repository for Actions commands
+- For Bitwarden project resolution only: an existing named bws profile, externally provisioned machine account, and compatible `gh_vault_bws` package in a local checkout
 
 ```sh
 sudo apt install pass gnupg
@@ -94,6 +95,8 @@ The `--force` flag in snapshot mode only matters when the `forgegod-gh-vault` di
 | Artifact | Location | Mode |
 |---|---|---|
 | Token values | `pass` entries under `gh-vault/<profile>` | GPG-encrypted |
+| Bitwarden access tokens | `pass` entries under `gh-vault/bitwarden/<connection>` | GPG-encrypted; optional alternative to `BWS_ACCESS_TOKEN` |
+| Bitwarden connection metadata | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` | Value-free config/profile, HTTPS endpoints, and organization UUID |
 | Archived secret values and eligible templates | `pass` entries under `gh-vault/projects/<host>/<owner>/<repo>/` | GPG-encrypted |
 | Archived public variable values | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/env[.<profile>].variables.json` | `0600`; parent directories `0700` |
 | Value-free environment index | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/environments.json` | `0600`; parent directories `0700` |
@@ -197,6 +200,70 @@ To switch from `gh auth git-credential`:
 git config --unset credential.https://github.com.helper
 git config credential.https://github.com.helper '!gh-vault git-credential'
 ```
+
+## Bitwarden connection and project resolution
+
+Bitwarden support is explicit and separate from GitHub token profiles. Machine
+accounts, projects, permissions, access tokens, and the private adapter checkout
+are provisioned outside gh-vault. The published package does not include the
+Bitwarden SDK, fetch an adapter, probe regions, list projects by name, or create
+projects.
+
+Create a named connection from an existing bws profile. The default bws config is
+`~/.config/bws/config`; use `--bws-config` to select another file. The profile
+must resolve both API and identity endpoints over HTTPS.
+
+```sh
+gh-vault bitwarden connection set eu-production \
+  --bws-profile eu \
+  --organization-id 11111111-1111-4111-8111-111111111111
+
+gh-vault bitwarden connection list
+```
+
+Connection metadata is restrictive but not encrypted and contains no access
+token. Re-running `connection set` explicitly rebinds the name. A later project
+request rereads the bws profile and refuses endpoint drift rather than trying the
+credential against another region.
+
+Choose exactly one credential source. Environment mode is the default and reads
+only an already exported `BWS_ACCESS_TOKEN`. Vault mode stores the token separately
+through `pass`; stdin or a hidden TTY prompt is required, never an argv value.
+
+```sh
+printf '%s' "$BWS_ACCESS_TOKEN" | \
+  gh-vault bitwarden credential set eu-production --stdin
+
+gh-vault bitwarden credential remove eu-production
+```
+
+Resolve one pre-known project UUID through an operator-held local checkout. The
+path must contain `gh_vault_bws/__init__.py` implementing adapter API version 1.
+The interface receives explicit endpoint, credential, organization, project, and
+temporary-state inputs and returns only the selected project and organization
+IDs; SDK implementation details stay in the private adapter repository.
+
+```sh
+# Read only BWS_ACCESS_TOKEN; this is the default credential source.
+gh-vault bitwarden project resolve \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws
+
+# Use the independently encrypted credential; never fall back to the environment.
+gh-vault bitwarden project resolve \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --adapter-path ../gh-vault-bws \
+  --credential-source vault
+```
+
+Run project resolution inside a checkout with a valid `remote.origin.url`.
+`BWS_CONFIG_FILE`, `BWS_PROFILE`, and `BWS_SERVER_URL` are rejected for this
+operation because the named connection is authoritative. A valid renamed origin
+is revalidated for the current invocation; no hidden repository/project binding
+cache exists. Success prints the selected UUID and connection name. Adapter
+stdout, stderr, raw errors, access tokens, and project listings are not relayed.
 
 ## Project environment archive
 
@@ -490,6 +557,8 @@ Values with embedded newlines are stored as `@base64:` when written to `.env` or
 ## Security model
 
 - Tokens, secret environment values, and eligible archive templates live only in `pass` under `gh-vault/`.
+- Bitwarden connection metadata contains no credential. Bitwarden access tokens come only from the explicitly selected `BWS_ACCESS_TOKEN` or `pass` entry below `gh-vault/bitwarden/`; there is no fallback, GitHub validation, child-process injection, or token output.
+- Bitwarden project access loads only the explicit local adapter path, validates endpoint binding before credential access, and uses temporary per-request state. The adapter is trusted same-user code, not a sandbox.
 - Only values explicitly marked `# gh-vault: variable` may enter the public XDG archive. Operators must classify them as safe for clear-text local storage before archiving or migration.
 - Public variable payloads and value-free indexes are mode `0600` below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/`, with mode-`0700` directories. Secret and local-only values never enter those files or `config.json`.
 - `.env`, `.secrets`, and `.vars` are ignored by Git. Generated files are mode `0600`.

@@ -43,6 +43,22 @@ stdout commands provide explicit consumer boundaries. They do not make the
 child trusted or prevent it from logging credentials. No implicit profile
 fallback is used when selection is absent.
 
+## Keep Bitwarden SDK use behind an operator-held local boundary
+
+The published package records only value-free named-connection metadata and a
+versioned interface for one explicit project lookup. The adapter implementation
+and SDK dependency remain in a separately licensed private sibling checkout that
+the operator supplies by local path; gh-vault does not fetch, install, vendor, or
+submodule it. This preserves the public distribution boundary without replacing
+safe in-process credential transfer with argv, raw REST, or application-owned
+cryptography.
+
+Connection setup resolves an existing named bws profile before any credential is
+read. Each project request rechecks that endpoint pair and rejects ambient bws
+profile/server overrides, so an access token is never probed against an implicit
+or drifted region. Environment and encrypted-vault credential sources are
+explicit and mutually non-fallback.
+
 ## Separate current behavior, progress, and rationale
 
 CAPs state behavior with executable evidence. An active CHG carries material

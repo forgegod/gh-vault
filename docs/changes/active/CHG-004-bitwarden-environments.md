@@ -19,18 +19,16 @@ accounts, operator-level region configuration, optional local encrypted token
 storage, and an explicit project ID for the initial scope instead of incomplete
 project-name listing or a mandatory repository TOML binding file.
 
-This record is the sole phased plan, not a claim of implemented support. Creating
-it does not start specification, implementation, provisioning, or migration.
-Only Phase 1 is selected by the direct operator request: "start the plan in
-docs/changes/active/CHG-004-bitwarden-environments.md with
-skills/software-development/phased-plan-execution/ skill". Later phases remain
-pending. No commit, push, release, live credential access, or remote write is
-authorized by this plan.
+This record is the sole phased plan, not a claim of fully implemented support.
+Phase 2 is complete at its verified working-tree checkpoint. Later phases remain
+pending, and the record is blocked between phases until another execution cycle
+is selected. No commit, push, release, live credential access, or remote write
+is authorized by this plan.
 
 The operator explicitly approved the narrow Bitwarden extension and local-path
-split in Phase 1. Current CAPs, architecture, and security contracts remain
-unchanged until the corresponding implementation slice and executable evidence
-exist; approval is not a claim of implemented behavior.
+split in Phase 1. Phase 2 implements only connection metadata, optional encrypted
+credential storage, the explicit local loader, and project-result validation.
+Environment recovery, value transfer, and Actions delivery remain unimplemented.
 
 ## SDK license boundary
 
@@ -227,7 +225,7 @@ DOX, README/security contracts where applicable, and this record together.
 | # | Phase | Status | Verification gate |
 | --- | --- | --- | --- |
 | 1 | Resolve integration contracts and approval | done (`make verify`: 206 Python tests, 82 Node tests, record validation; operator decisions recorded) | `make records-check` exits 0; integration-contract checklist below is resolved and explicitly approved |
-| 2 | Operator connection and project discovery | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0 |
+| 2 | Operator connection and project discovery | done (143 focused tests; record validation; `make verify`: 238 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0 |
 | 3 | Fresh-clone dotenv recovery | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_vault_features.py` exits 0; `make records-check` exits 0 |
 | 4 | Explicit upload to Bitwarden | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
 | 5 | Publish GitHub standby values | pending | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
@@ -283,8 +281,7 @@ discarded a nonempty continuation token. `make verify` passes (206 Python tests,
 extension and local-path split, selected explicit project-ID-only discovery for
 the initial scope, and accepted the pinned action launcher's residual unverified
 release-asset trust. No current CAP changed because no behavior is implemented.
-The CHG remains blocked between phases because this request selected only Phase 1,
-and Phase 2 execution is not authorized.
+Phase 1 is the verified checkpoint for the selected Phase 2 execution.
 **Operator decision:** do not publish an open-source project that uses the SDK.
 The suggested public `bws install` / GitHub `git pull` path is rejected. Retain
 upload and later phases under the local-path split; do not substitute read-only
@@ -301,14 +298,20 @@ implement outside that approved boundary.
    in this repository is an interface and non-functional mock, or a loader for a
    local path the operator already has. It must not import, vendor, fetch, or
    call the SDK. Authentication, endpoint binding, and project listing take
-   effect in `../gh-vault-bws`. Tests here fake that boundary.
+   effect in `../gh-vault-bws`. Tests here fake that boundary. The public loader
+   requests only the explicit project and requires a versioned, structured result
+   carrying the selected project and expected organization IDs; it does not expose
+   the private implementation's project-list response or SDK operations.
 2. Support external token injection and optional independent encrypted credential
    storage; bind it to the explicit server/profile and expected organization.
    Refuse conflicts instead of trying credentials against another server. Preserve
    GitHub profile storage/selection and credential-helper behavior.
 3. Require and verify an explicit project UUID after validating Git origin; cover
    missing/invalid/inaccessible projects, wrong organization, renamed origin, and
-   region mismatch. Never list by name or auto-create in the initial scope.
+   region mismatch. Never list by name or auto-create in the initial scope. With
+   no repository binding file or durable project cache, a valid renamed origin is
+   revalidated for the current invocation rather than compared with hidden history;
+   the explicit project UUID remains the target authority.
 4. Add `tests/test_bitwarden_connection.py` with fake client/process boundaries;
    assert no token/value output, argv leakage, metadata leakage, shell mutation,
    unsolicited cross-project access, or accidental GitHub token inspection.
@@ -317,6 +320,17 @@ implement outside that approved boundary.
    and offline-test boundaries; do not introduce a general provider framework.
 
 **Verification gate:** `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py tests/test_store.py` exits 0; `make records-check` exits 0.
+
+**Completion evidence:** The CLI stores value-free named connection metadata,
+keeps optional Bitwarden credentials in separate `pass` entries, validates Git
+origin and bws endpoint drift before credential access, and resolves only an
+explicit project through adapter API version 1 loaded from an explicit local
+path. Synthetic tests cover inaccessible/mismatched targets, organization and
+region mismatch, renamed-origin revalidation, credential-source isolation,
+value-free errors/output, temporary state cleanup, and GitHub-profile regression.
+The focused gate passes on Python 3.10 and 3.11 (143 tests); `make records-check`
+and `make verify` pass (238 Python tests, 82 Node tests). No live Bitwarden call,
+SDK import, remote write, commit, or push occurred.
 
 ## Phase 3 — Fresh-clone dotenv recovery
 
@@ -472,10 +486,11 @@ Bitwarden delivery and independent GitHub rollback.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phase 1 complete and six pending rows. DOX
-ownership and child indexes remain accurate. Root/child
-DOX, README, architecture, security, design decisions, and CAPs are intentionally
-unchanged because only review/progress artifacts changed, not current behavior.
+package. The phase table records Phases 1 and 2 complete with five pending rows.
+CAP-001/CAP-002, root/child DOX, README, architecture, security, and design
+decisions describe the implemented local connection/project boundary. They do
+not claim environment recovery, value transfer, live service behavior, or SDK
+implementation in this repository.
 
 Public references inform the concept; recheck supported versions in Phase 1:
 
@@ -488,6 +503,5 @@ Public references inform the concept; recheck supported versions in Phase 1:
 
 Resume with the repository-local
 [phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Select Phase 2 only in a new execution cycle after the Phase 1
-checkpoint; re-read the applicable DOX chain, inspect current git state/baseline,
-and keep exactly one phase in progress.
+and this record. Phase 2 is complete and the record is blocked between phases;
+select Phase 3 in a new execution cycle before changing its implementation scope.

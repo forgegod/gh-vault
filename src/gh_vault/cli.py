@@ -10,9 +10,10 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from .actions import action_values, check_workflows, default_repo, export_act, import_variables, json_result, migrate_env_source, remote_secret_status, run_act, runtime_environment, suggested_env, sync
-from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, restore_environment, show_environment
+from .bitwarden import assert_connection_current, default_bws_config, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, reject_bws_overrides, resolve_project
+from .envfiles import archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
-from .store import EnvironmentStore, Profile, StoreError, VaultStore
+from .store import BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
 PROFILE_NAME_ERROR = "must be 1-64 characters; first character must be a letter or digit, the rest may be letters, digits, dot, underscore, or hyphen"
@@ -73,6 +74,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_act_parser = commands.add_parser("run-act", help="run act with ephemeral typed values", description="Run act with temporary 0600 secret and variable files that are removed when the child exits."); run_act_parser.add_argument("--env-file", type=Path, default=Path(".env"), help="environment file path"); run_act_parser.add_argument("program", nargs=argparse.REMAINDER, help="act command to run, after --")
     credential = commands.add_parser("git-credential", help="serve Git credential-helper protocol", description="Serve Git's credential-helper protocol for HTTPS requests to github.com only."); credential.add_argument("operation", choices=("get", "store", "erase"), help="Git credential-helper operation")
 
+    bitwarden = commands.add_parser("bitwarden", help="manage Bitwarden connections and explicit project access", description="Manage operator-level Bitwarden connection metadata, encrypted access tokens, and explicit project resolution through a local adapter.").add_subparsers(dest="bitwarden_command", required=True)
+    bitwarden_connection = bitwarden.add_parser("connection", help="set or list Bitwarden connections", description="Bind named connections to existing bws profiles and expected organizations.").add_subparsers(dest="connection_command", required=True)
+    connection_set = bitwarden_connection.add_parser("set", help="create or replace a connection", description="Bind a named bws profile, its resolved HTTPS endpoints, and one expected organization UUID.")
+    connection_set.add_argument("name", type=profile_name, help="connection name")
+    connection_set.add_argument("--bws-profile", type=profile_name, required=True, help="existing named profile in the selected bws config")
+    connection_set.add_argument("--bws-config", type=Path, default=default_bws_config(), help="bws configuration path; defaults to ~/.config/bws/config")
+    connection_set.add_argument("--organization-id", type=organization_uuid, required=True, help="expected canonical organization UUID")
+    bitwarden_connection.add_parser("list", help="list connections", description="List configured Bitwarden connections without accessing credentials.")
+    bitwarden_credential = bitwarden.add_parser("credential", help="store or remove an encrypted Bitwarden credential", description="Manage independently encrypted Bitwarden access tokens without changing GitHub profiles.").add_subparsers(dest="credential_command", required=True)
+    credential_set = bitwarden_credential.add_parser("set", help="store a credential", description="Store a Bitwarden access token for one configured connection through pass/GPG.")
+    credential_set.add_argument("connection", type=profile_name, help="configured connection name")
+    credential_set.add_argument("--stdin", action="store_true", help="read the access token from standard input")
+    credential_remove = bitwarden_credential.add_parser("remove", help="remove a credential", description="Remove a Bitwarden access token without removing its connection metadata.")
+    credential_remove.add_argument("connection", type=profile_name, help="configured connection name")
+    bitwarden_project = bitwarden.add_parser("project", help="resolve an explicit Bitwarden project", description="Resolve one explicit project through an operator-held local adapter.").add_subparsers(dest="project_command", required=True)
+    project_resolve = bitwarden_project.add_parser("resolve", help="resolve an explicit project", description="Resolve one explicit Bitwarden project UUID after validating the checkout, connection, and selected credential source.")
+    project_resolve.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
+    project_resolve.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
+    project_resolve.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    project_resolve.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+
     env = commands.add_parser("env", help="archive, restore, list, or run with project environment values", description="Archive, restore, or list project .env variants and their .env.example templates, or run a command with declared Actions values.").add_subparsers(dest="env_command", required=True)
     archive = env.add_parser("archive", help="archive one or more typed project environments", description="Archive variable declarations in the public XDG store and secret declarations plus eligible templates in the encrypted vault.")
     archive.add_argument("--env-file", type=Path, action="append", help=".env or .env.<profile>; repeat to archive multiple variants")
@@ -124,6 +146,84 @@ def _read_token(use_stdin: bool, *, enforce_format: bool = True) -> str:
     if not token or "\n" in token or "\r" in token:
         raise StoreError("token must be a non-empty single line")
     return token
+
+
+def _read_bitwarden_token(use_stdin: bool) -> str:
+    if use_stdin:
+        token = sys.stdin.read().rstrip("\r\n")
+    elif not sys.stdin.isatty():
+        raise StoreError("refusing to prompt without a TTY; use --stdin")
+    else:
+        token = getpass.getpass("Bitwarden access token: ")
+    if not token or "\n" in token or "\r" in token:
+        raise StoreError("Bitwarden access token must be a non-empty single line")
+    return token
+
+
+def _bitwarden_dispatch(args: argparse.Namespace, store: VaultStore, directory: Path) -> int:
+    if args.bitwarden_command == "connection":
+        if args.connection_command == "set":
+            config_path = args.bws_config.expanduser().resolve()
+            endpoints = load_bws_endpoints(config_path, args.bws_profile)
+            store.put_bitwarden_connection(
+                BitwardenConnection(
+                    args.name,
+                    str(config_path),
+                    args.bws_profile,
+                    endpoints.api_url,
+                    endpoints.identity_url,
+                    args.organization_id,
+                )
+            )
+            print(f"Stored Bitwarden connection: {args.name}")
+            return 0
+        connections = store.bitwarden_connections()
+        for connection in connections:
+            print(
+                f"{connection.name} profile={connection.bws_profile} "
+                f"organization={connection.organization_id} "
+                f"api={connection.api_url} identity={connection.identity_url} "
+                f"config={connection.bws_config}"
+            )
+        if not connections:
+            print("No Bitwarden connections configured.")
+        return 0
+
+    if args.bitwarden_command == "credential":
+        if args.credential_command == "set":
+            store.put_bitwarden_credential(
+                args.connection, _read_bitwarden_token(args.stdin)
+            )
+            print(f"Stored Bitwarden credential: {args.connection}")
+        else:
+            store.remove_bitwarden_credential(args.connection)
+            print(f"Removed Bitwarden credential: {args.connection}")
+        return 0
+
+    connection = store.get_bitwarden_connection(args.connection)
+    project_namespace(directory)
+    assert_connection_current(connection)
+    reject_bws_overrides()
+    adapter = load_local_adapter(args.adapter_path)
+    try:
+        if args.credential_source == "env":
+            access_token = os.environ.get("BWS_ACCESS_TOKEN", "")
+            if not access_token:
+                raise StoreError(
+                    "BWS_ACCESS_TOKEN is required for --credential-source env"
+                )
+        else:
+            access_token = store.get_bitwarden_credential(connection.name)
+        project = resolve_project(adapter, connection, access_token, args.project_id)
+    finally:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
+    print(
+        f"Resolved Bitwarden project {project.project_id} "
+        f"for connection {connection.name}."
+    )
+    return 0
 
 
 def _set(store: VaultStore, args: argparse.Namespace) -> int:
@@ -250,6 +350,7 @@ def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path
     if args.command == "run": return _run(store, args.name, args.program)
     if args.command == "run-act": return run_act(args.env_file, args.program, directory)
     if args.command == "git-credential": return _git_credential(store, args.operation)
+    if args.command == "bitwarden": return _bitwarden_dispatch(args, store, directory)
 
     if args.command == "actions":
         env_count, example_count = migrate_env_source(args.env_file)

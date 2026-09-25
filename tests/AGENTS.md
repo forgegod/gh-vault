@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspection, credential-helper filtering, child-process token injection, profile metadata persistence, and the `pass` integration contract.
+Deterministic pytest coverage for CLI and credential boundaries, GitHub token metadata inspection, local Bitwarden adapter isolation, profile/connection persistence, and the `pass` integration contract.
 
 ## Ownership
 
@@ -10,6 +10,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 |---|---|
 | `test_cli.py` | Parser helpers, token metadata integration, profile listing, Git credential output filtering, migrations, and `run` / `env run` / `run-act` dispatch behavior using an in-memory store. |
 | `test_store.py` | Token and environment store lifecycle, restrictive permissions, payload/index isolation, replacement rules, validation, missing-secret errors, and a temporary executable fake `pass` backend. |
+| `test_bitwarden_connection.py` | Synthetic bws profile parsing, connection drift, credential-source isolation, explicit local-adapter loading, and project-result validation. |
 | `test_vault_features.py` | Project-origin namespace normalization, dotenv and two-stage migration contracts, split archive/restore/show boundaries, remote Actions type checks, persistent exports, ephemeral `act` lifecycle, and workflow-wiring checks. |
 | `test_capability_boundaries.py` | End-to-end local characterization of documented limitations, with only external subprocess boundaries replaced. |
 | `records/` | Synthetic Node record-validator regressions, isolated from Python product tests. |
@@ -21,6 +22,7 @@ Deterministic pytest coverage for the CLI boundary, GitHub token metadata inspec
 - Secret assertions use synthetic values and verify that metadata does not contain them.
 - CLI process replacement is intercepted with `monkeypatch`; tests must not exec real child commands.
 - Environment and workflow tests use temporary files plus mocked Git/GitHub subprocess boundaries; they must not read a real `.env`, password store, or GitHub account.
+- Bitwarden tests use synthetic TOML, UUIDs, access tokens, and local adapter packages under pytest temporary directories. They never import the SDK, read the operator's bws config, or contact Bitwarden.
 - Environment-scoped Actions tests assert the read-only GitHub Environment preflight and every `--env` argument, including the scope-local delete/migration boundary.
 - Git credential tests cover allowed protocol/host combinations and assert the exact protocol response.
 - Permission checks target POSIX mode `0700` for config/environment directories and `0600` for metadata, payload, and index JSON files.

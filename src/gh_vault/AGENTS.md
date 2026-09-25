@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Production package for storing named GitHub tokens and project environment archives through `pass`, selecting an active profile, syncing Actions values, and supplying a selected token to child commands or Git's credential-helper protocol.
+Production package for storing named GitHub tokens and project environment archives through `pass`, selecting an active profile, syncing Actions values, supplying a selected token to consumers, and resolving explicit Bitwarden projects through an operator-held local adapter.
 
 ## Ownership
 
@@ -12,6 +12,7 @@ Production package for storing named GitHub tokens and project environment archi
 | `__main__.py` | Module entry point delegating to the CLI. |
 | `cli.py` | Command dispatch for profiles, archives, explicit migrations, Actions sync, workflow checks, child-process injection, and Git credential helper. |
 | `store.py` | Profile metadata, restrictive config and public environment persistence, `pass` integration, and backend errors. |
+| `bitwarden.py` | Named bws-profile endpoint resolution, explicit local adapter loading, and value-free project-result validation. |
 | `envfiles.py` | Safe ordinary and typed dotenv parsing, origin namespace resolution, split archive migration, public inspection, and reconstruction. |
 | `github.py` | GitHub token metadata inspection without exposing token values. |
 | `actions.py` | GitHub Actions value selection, explicit legacy declaration migration, remote-variable import, `gh` sync, persistent exports, ephemeral `act` execution, and workflow references. |
@@ -26,6 +27,9 @@ Production package for storing named GitHub tokens and project environment archi
 - `find` skips the length, alphabet, and masked-output gates but still rejects empty and multiline candidates; this lets existing profiles be located by short synthetic tokens used in fixtures and tests.
 - Token values are non-empty single lines stored only through `pass` under `gh-vault/<profile>` in `${PASSWORD_STORE_DIR:-~/.password-store}`. Encrypted environment payloads stay below the same namespace; only explicitly public variable payloads may use `EnvironmentStore`. Secret reads remove only the single record-separator newline emitted by `pass`, preserving newlines that belong to multiline payloads.
 - `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` contains metadata only. Its directory is mode `0700`, the file is mode `0600`, and writes replace an adjacent temporary file atomically.
+- Bitwarden connection metadata in `config.json` contains only the selected bws config/profile, resolved HTTPS endpoints, and expected organization UUID. Access tokens use `pass` entries below `gh-vault/bitwarden/<connection>` or the explicitly selected `BWS_ACCESS_TOKEN`; neither source falls back to the other.
+- `bitwarden project resolve` validates the current Git origin, re-resolves the saved bws profile, rejects endpoint drift and ambient bws profile/server overrides, and requires explicit connection, project UUID, local adapter path, and credential source. The adapter must return exactly the requested project and expected organization IDs; raw adapter output and errors are not relayed.
+- The public package never imports the Bitwarden SDK, fetches the private adapter, lists projects by name, or creates projects. It loads `gh_vault_bws` only from the operator-supplied local directory and removes that module after the request.
 - `EnvironmentStore` keeps explicitly public variable payloads and value-free environment indexes below `${XDG_CONFIG_HOME:-~/.config}/gh-vault/environments/<host>/<owner>/<repo>/`; every directory is mode `0700`, every JSON file is mode `0600`, and payload/index schemas remain separate and origin-bound.
 - The first set profile becomes active. Removing the active profile leaves no active profile; selection never falls back implicitly.
 - `find --stdin` reads one candidate token from standard input, compares it against every configured profile inside the process, prints only matching profile names, exits `0` when at least one profile matches, and exits `1` silently when none match. Empty or multiline candidates are rejected and token values never appear in output or errors.

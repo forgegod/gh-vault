@@ -37,6 +37,43 @@ class Profile:
         return {"scopes": list(self.scopes), "note": self.note, "expires_at": self.expires_at}
 
 
+@dataclass(frozen=True)
+class BitwardenConnection:
+    name: str
+    bws_config: str
+    bws_profile: str
+    api_url: str
+    identity_url: str
+    organization_id: str
+
+    @classmethod
+    def from_dict(cls, name: str, value: object) -> "BitwardenConnection":
+        fields = {
+            "bws_config",
+            "bws_profile",
+            "api_url",
+            "identity_url",
+            "organization_id",
+        }
+        if (
+            not PROFILE_NAME.fullmatch(name)
+            or not isinstance(value, dict)
+            or set(value) != fields
+            or not all(isinstance(value[field], str) and value[field] for field in fields)
+        ):
+            raise StoreError("Bitwarden connection metadata has invalid data")
+        return cls(name=name, **value)
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "bws_config": self.bws_config,
+            "bws_profile": self.bws_profile,
+            "api_url": self.api_url,
+            "identity_url": self.identity_url,
+            "organization_id": self.organization_id,
+        }
+
+
 class VaultStore:
     def __init__(self, config_dir: Path | None = None, pass_tool: str | None = None, password_store_dir: Path | None = None) -> None:
         base = config_dir or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / STORE_PREFIX
@@ -57,12 +94,19 @@ class VaultStore:
         try:
             data = json.loads(self.config_file.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            return {"active": None, "profiles": {}}
+            return {"active": None, "profiles": {}, "bitwarden": {"connections": {}}}
         except (OSError, json.JSONDecodeError) as exc:
             raise StoreError(f"cannot read {self.config_file}: {exc}") from exc
         if not isinstance(data.get("profiles"), dict):
             raise StoreError(f"invalid config file: {self.config_file}")
         data.setdefault("active", None)
+        bitwarden = data.setdefault("bitwarden", {"connections": {}})
+        if (
+            not isinstance(bitwarden, dict)
+            or set(bitwarden) != {"connections"}
+            or not isinstance(bitwarden["connections"], dict)
+        ):
+            raise StoreError(f"invalid config file: {self.config_file}")
         return data
 
     def save(self, data: dict[str, Any]) -> None:
@@ -113,6 +157,50 @@ class VaultStore:
         if data["active"] == name:
             data["active"] = None
         self.save(data)
+
+    def put_bitwarden_connection(self, connection: BitwardenConnection) -> None:
+        if not PROFILE_NAME.fullmatch(connection.name):
+            raise StoreError("invalid Bitwarden connection name")
+        data = self.load()
+        data["bitwarden"]["connections"][connection.name] = connection.as_dict()
+        self.save(data)
+
+    def bitwarden_connections(self) -> list[BitwardenConnection]:
+        connections = self.load()["bitwarden"]["connections"]
+        return [
+            BitwardenConnection.from_dict(name, value)
+            for name, value in sorted(connections.items())
+        ]
+
+    def get_bitwarden_connection(self, name: str) -> BitwardenConnection:
+        connections = self.load()["bitwarden"]["connections"]
+        if name not in connections:
+            raise StoreError(f"unknown Bitwarden connection: {name}")
+        return BitwardenConnection.from_dict(name, connections[name])
+
+    def put_bitwarden_credential(self, name: str, token: str) -> None:
+        self.get_bitwarden_connection(name)
+        if not token or "\n" in token or "\r" in token:
+            raise StoreError("Bitwarden access token must be a non-empty single line")
+        self.put_secret(f"bitwarden/{name}", token)
+
+    def get_bitwarden_credential(self, name: str) -> str:
+        self.get_bitwarden_connection(name)
+        try:
+            return self.get_secret(f"bitwarden/{name}")
+        except StoreError:
+            raise StoreError(
+                f"Bitwarden credential is not configured for connection '{name}'"
+            ) from None
+
+    def remove_bitwarden_credential(self, name: str) -> None:
+        self.get_bitwarden_connection(name)
+        try:
+            self.remove_secret(f"bitwarden/{name}")
+        except StoreError:
+            raise StoreError(
+                f"Bitwarden credential is not configured for connection '{name}'"
+            ) from None
 
     def put_secret(self, name: str, value: str) -> None:
         self._run(["insert", "--force", "--multiline", self._entry(name)], value + "\n", "store")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gh_vault.store import EnvironmentStore, Profile, StoreError, VaultStore
+from gh_vault.store import BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
 
 
 @pytest.fixture
@@ -211,3 +211,72 @@ def test_missing_secret_is_reported(store: VaultStore) -> None:
 
     with pytest.raises(StoreError, match="load profile"):
         store.get("missing")
+
+
+def test_bitwarden_connection_metadata_and_credential_are_separated(store: VaultStore) -> None:
+    connection = BitwardenConnection(
+        name="eu-production",
+        bws_config="/synthetic/bws/config",
+        bws_profile="eu",
+        api_url="https://api.bitwarden.eu",
+        identity_url="https://identity.bitwarden.eu",
+        organization_id="11111111-1111-4111-8111-111111111111",
+    )
+
+    store.put_bitwarden_connection(connection)
+    store.put_bitwarden_credential(connection.name, "synthetic-bws-token")
+
+    assert store.bitwarden_connections() == [connection]
+    assert store.get_bitwarden_connection(connection.name) == connection
+    assert store.get_bitwarden_credential(connection.name) == "synthetic-bws-token"
+    config = store.config_file.read_text(encoding="utf-8")
+    assert "synthetic-bws-token" not in config
+    assert "gh-vault/bitwarden/eu-production" in Path(os.environ["FAKE_SECRET_DB"]).read_text(encoding="utf-8")
+
+
+def test_bitwarden_connection_replacement_does_not_change_github_selection(store: VaultStore) -> None:
+    store.put(Profile("github"), "github-token")
+    first = BitwardenConnection(
+        "shared",
+        "/synthetic/first",
+        "first",
+        "https://first.example.test/api",
+        "https://first.example.test/identity",
+        "11111111-1111-4111-8111-111111111111",
+    )
+    second = BitwardenConnection(
+        "shared",
+        "/synthetic/second",
+        "second",
+        "https://second.example.test/api",
+        "https://second.example.test/identity",
+        "22222222-2222-4222-8222-222222222222",
+    )
+
+    store.put_bitwarden_connection(first)
+    store.put_bitwarden_connection(second)
+
+    assert store.get_bitwarden_connection("shared") == second
+    assert store.active() == "github"
+    assert store.get() == "github-token"
+
+
+def test_bitwarden_credential_requires_connection_and_removes_only_credential(store: VaultStore) -> None:
+    with pytest.raises(StoreError, match="unknown Bitwarden connection"):
+        store.put_bitwarden_credential("missing", "synthetic")
+
+    connection = BitwardenConnection(
+        "eu",
+        "/synthetic/config",
+        "eu",
+        "https://api.bitwarden.eu",
+        "https://identity.bitwarden.eu",
+        "11111111-1111-4111-8111-111111111111",
+    )
+    store.put_bitwarden_connection(connection)
+    store.put_bitwarden_credential("eu", "synthetic")
+    store.remove_bitwarden_credential("eu")
+
+    assert store.get_bitwarden_connection("eu") == connection
+    with pytest.raises(StoreError, match="credential is not configured"):
+        store.get_bitwarden_credential("eu")

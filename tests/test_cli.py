@@ -111,6 +111,11 @@ def test_add_command_is_removed() -> None:
         (["run", "--help"], "Run a child command"),
         (["run-act", "--help"], "Run act with temporary 0600 secret and variable files"),
         (["git-credential", "--help"], "Serve Git's credential-helper protocol"),
+        (["bitwarden", "connection", "set", "--help"], "Bind a named bws profile"),
+        (["bitwarden", "connection", "list", "--help"], "List configured Bitwarden connections"),
+        (["bitwarden", "credential", "set", "--help"], "Store a Bitwarden access token"),
+        (["bitwarden", "credential", "remove", "--help"], "Remove a Bitwarden access token"),
+        (["bitwarden", "project", "resolve", "--help"], "Resolve one explicit Bitwarden project UUID"),
         (["env", "archive", "--help"], "Archive variable declarations in the public XDG store"),
         (["env", "restore", "--help"], "Restore a project environment"),
         (["env", "list", "--help"], "List archived .env and .env.<profile> variants"),
@@ -350,6 +355,42 @@ def test_parser_accepts_variable_import_and_secret_check_commands() -> None:
     assert args.force is True
     assert cli.build_parser().parse_args(["secret", "check"]).secret_command == "check"
     assert cli.build_parser().parse_args(["variable", "check"]).variable_command == "check"
+
+
+def test_bitwarden_parser_requires_explicit_connection_project_and_adapter() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "bitwarden",
+            "project",
+            "resolve",
+            "--connection",
+            "eu-production",
+            "--project-id",
+            "22222222-2222-4222-8222-222222222222",
+            "--adapter-path",
+            "/operator/gh-vault-bws",
+        ]
+    )
+
+    assert args.bitwarden_command == "project"
+    assert args.project_command == "resolve"
+    assert args.connection == "eu-production"
+    assert args.project_id == "22222222-2222-4222-8222-222222222222"
+    assert args.adapter_path == Path("/operator/gh-vault-bws")
+    assert args.credential_source == "env"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["bitwarden", "project", "resolve", "--project-id", "22222222-2222-4222-8222-222222222222", "--adapter-path", "/operator/gh-vault-bws"],
+        ["bitwarden", "project", "resolve", "--connection", "eu", "--adapter-path", "/operator/gh-vault-bws"],
+        ["bitwarden", "project", "resolve", "--connection", "eu", "--project-id", "22222222-2222-4222-8222-222222222222"],
+    ],
+)
+def test_bitwarden_project_resolve_rejects_missing_explicit_selectors(arguments: list[str]) -> None:
+    with pytest.raises(SystemExit, match="2"):
+        cli.build_parser().parse_args(arguments)
 
 
 def test_sync_rejects_prune_with_type_migration() -> None:

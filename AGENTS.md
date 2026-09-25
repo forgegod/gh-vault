@@ -85,12 +85,13 @@ Default section order:
 
 ## Project intent
 
-gh-vault is a Python CLI for named GitHub tokens, typed project environment archives, GitHub Actions values, and local workflow validation. It delegates encryption to `pass`/GPG and remote Actions operations to `gh`. The PyPI distribution is `forgegod-gh-vault`; its installed console command and argparse product name are `gh-vault`. `python -m gh_vault` is the module entry point.
+gh-vault is a Python CLI for named GitHub tokens, typed project environment archives, GitHub Actions values, local workflow validation, and explicitly configured Bitwarden project access through an operator-held local adapter. It delegates encryption to `pass`/GPG and remote Actions operations to `gh`. The PyPI distribution is `forgegod-gh-vault`; its installed console command and argparse product name are `gh-vault`. `python -m gh_vault` is the module entry point.
 
 ## Architectural decisions
 
 - **Agent harness protected by tirith.sh.** Reading passwords or access tokens is prohibited. Extract variables from `.env` / config files without relaying their values; use environment variables by importing them for Bash execution. `***` in output is a tirith redaction marker, not a literal value — never "fix" it to a variable ref.
 - **Split vault backend.** Tokens, secret environment values, and eligible templates belong only in `pass` entries below `gh-vault/`. Explicit `# gh-vault: variable` values may use the restrictive XDG archive store; local and secret values must never enter it or metadata indexes.
+- **Local-only Bitwarden adapter.** The published package may store value-free Bitwarden connection metadata and load the `gh_vault_bws` interface only from an explicit operator-held local path. The adapter implementation and SDK dependency stay in the private sibling checkout; gh-vault never fetches, installs, vendors, or documents SDK call sequences. Bitwarden access tokens come only from `BWS_ACCESS_TOKEN` or separate `pass` entries below `gh-vault/bitwarden/`.
 - **Explicit GitHub Environment scope.** Remote Actions values use repository scope by default; `--github-environment NAME` is the only Environment selector. A local `.env.<profile>` or a typed directive must never infer a remote Environment. Environment-targeted operations preflight the existing target and keep comparison, type migration, and prune within that scope.
 - **Intentional credential output boundary.** The explicit `output` command and Git's exact `git-credential get` response may emit a token. Ordinary status, listing, diagnostics, and metadata must not. See `docs/security.md` for plaintext process/file boundaries.
 - **Unlock lifetime belongs to GPG.** `gh-vault` delegates passphrase caching to the user-level `gpg-agent`; it does not own or override the cache timeout. User documentation shows both `default-cache-ttl` and `max-cache-ttl` so an operator can choose the unlock duration.
@@ -102,7 +103,7 @@ gh-vault is a Python CLI for named GitHub tokens, typed project environment arch
 
 ## Architectural non-goals
 
-- No hosted service, graphical application, alternative secret backend, or application database.
+- No hosted service, graphical application, application database, or general secrets-provider framework.
 - No PAT issuance/rotation service and no control over GPG agent cache lifetime.
 - No shell evaluation of dotenv data, implicit legacy-archive migration, or automatic secret-to-public reclassification.
 - No GitHub Environment creation, deletion, protection-rule, reviewer, wait-timer, or deployment-policy management.

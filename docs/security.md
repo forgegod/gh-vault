@@ -18,6 +18,8 @@ review assets, or fixtures.
 | Data | Permitted destination | Operator responsibility |
 | --- | --- | --- |
 | GitHub token | `pass`, in-process memory, GitHub inspection request, selected child environment, explicit credential stdout | Restrict profile access and downstream consumers |
+| Bitwarden access token | `pass` below `gh-vault/bitwarden/` or selected `BWS_ACCESS_TOKEN`, in-process local-adapter call | Provision externally; select one source explicitly and restrict the adapter checkout |
+| Bitwarden connection metadata | Restrictive XDG config JSON, ordinary connection-list output | Treat endpoint paths and organization IDs as local operator metadata, not credentials or authorization proof |
 | Typed secret | Encrypted archive, selected child/process stdin, requested plaintext restore/export | Do not mark it `variable` |
 | Typed variable | Public XDG JSON, selected child, GitHub Variables, public show/restore/export | Classify it as safe for plaintext first |
 | Local-only assignment | Input file and any independently inherited environment | Not included in archive value payloads or injected from dotenv |
@@ -35,12 +37,24 @@ GitHub token inspection sends an Authorization header to
 credentials; a stored profile is not automatically the remote authentication
 identity. No separate telemetry service is implemented.
 
+Bitwarden project resolution never sends a token through argv or a child
+environment. It validates one named bws profile and current Git origin before
+reading the selected credential, then invokes only an explicitly selected local
+`gh_vault_bws` package in-process. Ambient `BWS_CONFIG_FILE`, `BWS_PROFILE`, and
+`BWS_SERVER_URL` overrides are rejected. Adapter stdout/stderr and raw exception
+text are discarded; the returned mapping must contain only the requested project
+and configured organization UUIDs. The adapter remains trusted same-user code,
+not a sandbox.
+
 ## Filesystem guarantees and limits
 
 - Config, public payload, and index JSON writes create/chmod private directories
   to `0700`, write a `0600` adjacent temporary file, fsync the file, and replace
   the destination. This is per-file atomic replacement, not concurrent-writer
   coordination or a transaction with the password store.
+- Bitwarden adapter authentication state uses a mode-`0700` temporary directory
+  for one request and is removed on return. No adapter state path is stored in
+  repository or connection metadata.
 - Restore/import and persistent act export use write-then-chmod and finish with
   `0600`; they do not guarantee private mode from the first byte on a newly
   created file. Use private directories and a restrictive umask. Symlink/race
@@ -74,11 +88,12 @@ directives; review output before further synchronization.
 ## Evidence
 
 [CAP verification sections](product/index.md) map behavior to executable tests.
-The store suite runs a temporary fake pass program. GitHub inspection and gh/act
-subprocess boundaries are replaced in tests. Restrictive file modes, data
+The store suite runs a temporary fake pass program. GitHub inspection, gh/act,
+and the local Bitwarden adapter boundary are replaced in tests. Restrictive file modes, data
 partitioning, selected output shapes, cleanup, and destructive-command sequences
 are asserted locally; these are not a cryptographic audit or proof of live
-GitHub permissions, GPG operation, act compatibility, or PyPI trusted publishing.
+GitHub/Bitwarden permissions, real adapter/SDK behavior, GPG operation, act
+compatibility, or PyPI trusted publishing.
 
 There is no blanket redaction, sandbox, concurrency, interruption-recovery, or
 malicious-filesystem guarantee. A material hardening change must update its CAP,

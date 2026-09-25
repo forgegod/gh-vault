@@ -3,7 +3,8 @@
 ## Product boundary
 
 gh-vault is a Linux-oriented Python 3.10+ command-line application for named
-GitHub tokens, typed project environments, Actions values, and workflow wiring.
+GitHub tokens, typed project environments, Actions values, workflow wiring, and
+explicit Bitwarden project access through an operator-held local adapter.
 The `forgegod-gh-vault` distribution installs the `gh-vault` executable;
 `python -m gh_vault` delegates to the same dispatcher. Argparse displays the
 same product label. The package has no declared third-party Python runtime
@@ -20,6 +21,7 @@ executable evidence. [README](../README.md) is the operator command guide;
 | --- | --- | --- |
 | `src/gh_vault/cli.py` | Argparse commands, dispatch, output, exit handling, process handoff | TTY/stdin, stdout/stderr, exec |
 | `src/gh_vault/store.py` | Token metadata, vault backend, public environment store | `pass`, restrictive JSON files |
+| `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project-result validation | Operator bws config and local `gh_vault_bws` checkout |
 | `src/gh_vault/github.py` | Token scope/expiration inspection | HTTPS GET to GitHub user API |
 | `src/gh_vault/envfiles.py` | Dotenv syntax, origin identity, archive/restore/migration | Git origin lookup, explicit file inputs |
 | `src/gh_vault/actions.py` | Actions selection, sync/check/import, act execution, workflow scanning | `gh`, act child, local workflow files |
@@ -32,20 +34,25 @@ not a blanket catch for every OS error or malformed input.
 
 1. `set` validates input syntax, attempts GitHub inspection, stores the token
    through `pass`, then records non-secret profile metadata and selection.
-2. Typed dotenv directives explicitly select secret/variable values. Runtime
+2. Bitwarden connection setup reads one explicit named bws profile, validates
+   and records its HTTPS endpoint pair plus expected organization, and optionally
+   stores a separate access token through `pass`. Project resolution revalidates
+   the current Git origin and endpoint binding before passing one explicit UUID
+   and selected credential to a versioned local adapter interface.
+3. Typed dotenv directives explicitly select secret/variable values. Runtime
    profile references resolve in-process for consumers with a vault store.
    `env run`/`run` inherit the parent environment and replace the current process.
-3. Archive identity is a normalized host/path plus an exact origin string.
+4. Archive identity is a normalized host/path plus an exact origin string.
    Public variables and a value-free index live under the XDG config root;
    secrets and eligible raw templates live in `pass`. Payloads are verified
    before stale values are removed; there is no cross-store transaction.
-4. Actions sync hands selected values to `gh` on stdin. Remote operations default
+5. Actions sync hands selected values to `gh` on stdin. Remote operations default
    to repository scope or use an explicit `--github-environment` target after a
    read-only environment preflight. Check operations compare remote names/types,
    not secret values. `--migrate-types` and `--prune` are explicit destructive
    modes confined to that selected scope; their selection boundary is detailed in
    CAP-006.
-5. `run-act` manages private temporary files for literal typed values and waits
+6. `run-act` manages private temporary files for literal typed values and waits
    for the child. Persistent export supports vault references; ephemeral runs
    reject them. Workflow check is a local line-based reference scanner.
 
@@ -53,6 +60,8 @@ not a blanket catch for every OS error or malformed input.
 | --- | --- | --- |
 | Profile metadata | XDG `gh-vault/config.json` | Profile names, scopes, notes, expiration, active selection |
 | Tokens | `pass`: `gh-vault/<profile>` | Encrypted backend; single-line token |
+| Bitwarden connections | XDG `gh-vault/config.json` | bws config/profile, resolved endpoint pair, expected organization UUID |
+| Bitwarden access tokens | `pass`: `gh-vault/bitwarden/<connection>` or selected `BWS_ACCESS_TOKEN` | Separate credential source with no fallback |
 | Public variables | XDG `gh-vault/environments/<host>/<path>/env[.<profile>].variables.json` | Version 1, exact origin, string values |
 | Environment index | Same directory, `environments.json` | Version 1, origin, per-profile boolean presence fields |
 | Archived secrets | `pass`: `gh-vault/projects/<host>/<path>/env[.<profile>].secrets.json` | Version 3, origin, string values |
@@ -100,7 +109,8 @@ limits. Do not promote a mocked collaborator test into a live-service claim.
 
 ## Non-goals
 
-- No hosted service, GUI, application database, or alternative secret backend.
+- No hosted service, GUI, application database, or general secrets-provider framework.
+- No public/private adapter fetch, SDK dependency in this distribution, region probing, project-name discovery, or project creation.
 - No PAT issuance/rotation service or control of GPG-agent caching.
 - No shell evaluation, implicit archive migration, or automatic public
   classification of secrets.

@@ -383,6 +383,19 @@ def test_bitwarden_parser_requires_explicit_connection_project_and_adapter() -> 
     assert args.adapter_path == Path("/operator/gh-vault-bws")
     assert args.credential_source == "env"
 
+    default_adapter = cli.build_parser().parse_args(
+        [
+            "bitwarden",
+            "project",
+            "resolve",
+            "--connection",
+            "eu-production",
+            "--project-id",
+            "22222222-2222-4222-8222-222222222222",
+        ]
+    )
+    assert default_adapter.adapter_path == cli.default_adapter_path()
+
     upload = cli.build_parser().parse_args(
         [
             "bitwarden",
@@ -407,7 +420,6 @@ def test_bitwarden_parser_requires_explicit_connection_project_and_adapter() -> 
     [
         ["bitwarden", "project", "resolve", "--project-id", "22222222-2222-4222-8222-222222222222", "--adapter-path", "/operator/gh-vault-bws"],
         ["bitwarden", "project", "resolve", "--connection", "eu", "--adapter-path", "/operator/gh-vault-bws"],
-        ["bitwarden", "project", "resolve", "--connection", "eu", "--project-id", "22222222-2222-4222-8222-222222222222"],
     ],
 )
 def test_bitwarden_project_resolve_rejects_missing_explicit_selectors(arguments: list[str]) -> None:

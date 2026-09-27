@@ -13,7 +13,7 @@
 
 - Linux, Python 3.10+, `pass`, and GPG
 - `gh` authenticated with access to the target repository for Actions commands
-- For Bitwarden project resolution or dotenv restore/upload: an existing named bws profile, externally provisioned machine account, and compatible `gh_vault_bws` package in a local checkout
+- For Bitwarden project resolution or dotenv restore/upload: an existing named bws profile, externally provisioned machine account, and compatible private `gh_vault_bws` checkout at the XDG data default or an explicit `--adapter-path`
 
 ```sh
 sudo apt install pass gnupg
@@ -209,6 +209,29 @@ are provisioned outside gh-vault. The published package does not include the
 Bitwarden SDK, fetch an adapter, probe regions, list projects by name, or create
 projects.
 
+### Private adapter checkout
+
+Bitwarden commands use this private checkout by default:
+
+```text
+${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws
+```
+
+Create its parent directory privately, then clone the operator-provided private
+repository there. Substitute the approved clone URL; gh-vault never runs these
+commands or updates the checkout.
+
+```sh
+adapter_root="${XDG_DATA_HOME:-$HOME/.local/share}/gh-vault/adapters"
+install -d -m 700 "$adapter_root"
+git clone git@github.com:OWNER/gh-vault-bws.git "$adapter_root/gh-vault-bws"
+```
+
+The checkout root must contain `gh_vault_bws/__init__.py` implementing adapter
+API version 1. Follow the private adapter repository's own dependency setup
+instructions. Use `--adapter-path /private/other/checkout` to override the
+default for one command.
+
 Create a named connection from an existing bws profile. The default bws config is
 `~/.config/bws/config`; use `--bws-config` to select another file. The profile
 must resolve both API and identity endpoints over HTTPS.
@@ -237,8 +260,9 @@ printf '%s' "$BWS_ACCESS_TOKEN" | \
 gh-vault bitwarden credential remove eu-production
 ```
 
-Resolve one pre-known project UUID through an operator-held local checkout. The
-path must contain `gh_vault_bws/__init__.py` implementing adapter API version 1.
+Resolve one pre-known project UUID through the default private checkout or an
+explicit `--adapter-path` override. The selected path must contain
+`gh_vault_bws/__init__.py` implementing adapter API version 1.
 The interface receives explicit endpoint, credential, organization, project, and
 temporary-state inputs. Project resolution returns the selected project and
 organization IDs; environment reads additionally return exact-name entries with
@@ -268,14 +292,12 @@ This is the public normalized interface only; SDK call sequences remain private.
 # Read only BWS_ACCESS_TOKEN; this is the default credential source.
 gh-vault bitwarden project resolve \
   --connection eu-production \
-  --project-id 22222222-2222-4222-8222-222222222222 \
-  --adapter-path ../gh-vault-bws
+  --project-id 22222222-2222-4222-8222-222222222222
 
 # Use the independently encrypted credential; never fall back to the environment.
 gh-vault bitwarden project resolve \
   --connection eu-production \
   --project-id 22222222-2222-4222-8222-222222222222 \
-  --adapter-path ../gh-vault-bws \
   --credential-source vault
 ```
 
@@ -302,8 +324,7 @@ managed values fail before credential or adapter access.
 # Default: inspect exact names and print a value-free create/skip preview.
 gh-vault bitwarden env upload \
   --connection eu-production \
-  --project-id 22222222-2222-4222-8222-222222222222 \
-  --adapter-path ../gh-vault-bws
+  --project-id 22222222-2222-4222-8222-222222222222
 
 # Preview updates for exact-name existing entries too.
 gh-vault bitwarden env upload \

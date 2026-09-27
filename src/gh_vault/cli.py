@@ -32,7 +32,7 @@ from .actions import (
     suggested_env,
     sync,
 )
-from .bitwarden import BitwardenWrite, assert_connection_current, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_project, write_environment
+from .bitwarden import BitwardenWrite, assert_connection_current, default_adapter_path, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_project, write_environment
 from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_actions, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
 from .store import ActionsPublicationStore, BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
@@ -125,13 +125,13 @@ def build_parser() -> argparse.ArgumentParser:
     project_resolve = bitwarden_project.add_parser("resolve", help="resolve an explicit project", description="Resolve one explicit Bitwarden project UUID after validating the checkout, connection, and selected credential source.")
     project_resolve.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
     project_resolve.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
-    project_resolve.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    project_resolve.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
     project_resolve.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
     bitwarden_env = bitwarden.add_parser("env", help="restore or upload declared Bitwarden environments", description="Restore or explicitly upload declared managed values for one Bitwarden project.").add_subparsers(dest="bitwarden_env_command", required=True)
     bitwarden_restore = bitwarden_env.add_parser("restore", help="restore a declared environment", description="Recreate .env from its template and exact-name values in one explicit Bitwarden project.")
     bitwarden_restore.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
     bitwarden_restore.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
-    bitwarden_restore.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_restore.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
     bitwarden_restore.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
     bitwarden_restore.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to restore")
     bitwarden_restore.add_argument("--example-file", type=Path, help="template path; defaults to the matching .env.example variant")
@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_upload = bitwarden_env.add_parser("upload", help="preview or upload a declared environment", description="Preview exact-name creates and updates, then explicitly upload managed .env values to one Bitwarden project.")
     bitwarden_upload.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
     bitwarden_upload.add_argument("--project-id", type=project_uuid, required=True, help="canonical project UUID")
-    bitwarden_upload.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_upload.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
     bitwarden_upload.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
     bitwarden_upload.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> to upload")
     bitwarden_upload.add_argument("--apply", action="store_true", help="perform the previewed creates and selected updates")
@@ -148,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_publish = bitwarden_actions.add_parser("publish", help="publish GitHub standby values", description="Read declared values from one Bitwarden project and preview or publish them to one explicit GitHub repository or Environment.")
     bitwarden_publish.add_argument("--connection", type=profile_name, required=True, help="configured connection name")
     bitwarden_publish.add_argument("--project-id", type=project_uuid, required=True, help="canonical Bitwarden project UUID")
-    bitwarden_publish.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_publish.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
     bitwarden_publish.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
     bitwarden_publish.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> selecting the matching declaration template")
     bitwarden_publish.add_argument("--example-file", type=Path, help="declaration template; defaults to the matching .env.example variant")
@@ -159,7 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     bitwarden_generate = bitwarden_actions.add_parser("generate", help="emit a deterministic dual-provider workflow mapping", description="Resolve declared managed names and Bitwarden UUIDs, then render a reproducible dual-provider workflow mapping for one consumer step.")
     bitwarden_generate.add_argument("--connection", type=profile_name, required=True, help="configured connection name")
     bitwarden_generate.add_argument("--project-id", type=project_uuid, required=True, help="canonical Bitwarden project UUID")
-    bitwarden_generate.add_argument("--adapter-path", type=Path, required=True, help="local checkout root containing gh_vault_bws")
+    bitwarden_generate.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
     bitwarden_generate.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
     bitwarden_generate.add_argument("--env-file", type=Path, default=Path(".env"), help=".env or .env.<profile> selecting the matching declaration template")
     bitwarden_generate.add_argument("--example-file", type=Path, help="declaration template; defaults to the matching .env.example variant")

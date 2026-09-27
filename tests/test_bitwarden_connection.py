@@ -95,6 +95,14 @@ server_identity = "https://identity.example.test/"
     )
 
 
+def test_default_adapter_path_uses_xdg_data_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", "/operator/data")
+
+    assert bitwarden.default_adapter_path() == Path(
+        "/operator/data/gh-vault/adapters/gh-vault-bws"
+    )
+
+
 @pytest.mark.parametrize(
     ("body", "profile", "match"),
     [
@@ -289,6 +297,39 @@ def test_project_resolve_uses_explicit_env_credential_without_github_inspection(
     output = capsys.readouterr().out
     assert output == f"Resolved Bitwarden project {PROJECT_ID} for connection {selected.name}.\n"
     assert ACCESS_TOKEN not in output
+
+
+def test_project_resolve_uses_default_adapter_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = MemoryStore()
+    selected = connection(tmp_path)
+    store.put_bitwarden_connection(selected)
+    default_path = tmp_path / "data" / "gh-vault" / "adapters" / "gh-vault-bws"
+    monkeypatch.setattr(cli, "default_adapter_path", lambda: default_path)
+    args = cli.build_parser().parse_args(
+        [
+            "bitwarden",
+            "project",
+            "resolve",
+            "--connection",
+            selected.name,
+            "--project-id",
+            PROJECT_ID,
+        ]
+    )
+    observed: dict[str, object] = {}
+
+    def adapter(**request: object) -> dict[str, str]:
+        return {"project_id": PROJECT_ID, "organization_id": ORGANIZATION_ID}
+
+    monkeypatch.setenv("BWS_ACCESS_TOKEN", ACCESS_TOKEN)
+    monkeypatch.setattr(cli, "project_namespace", lambda directory: ("github.com/owner/repo", "git@github.com:owner/repo.git"))
+    monkeypatch.setattr(cli, "assert_connection_current", lambda current: None)
+    monkeypatch.setattr(cli, "load_local_adapter", lambda path: observed.setdefault("path", path) and adapter)
+
+    assert cli.dispatch(args, store, tmp_path) == 0  # type: ignore[arg-type]
+    assert observed["path"] == default_path
 
 
 def test_project_resolve_uses_only_the_selected_vault_credential(

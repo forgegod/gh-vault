@@ -10,7 +10,7 @@ Deterministic pytest coverage for CLI and credential boundaries, GitHub token me
 |---|---|
 | `test_cli.py` | Parser helpers, token metadata integration, profile listing, Git credential output filtering, migrations, and `run` / `env run` / `run-act` dispatch behavior using an in-memory store. |
 | `test_store.py` | Token and environment store lifecycle, restrictive permissions, payload/index isolation, replacement rules, validation, missing-secret errors, and a temporary executable fake `pass` backend. |
-| `test_bitwarden_connection.py` | Synthetic bws profile parsing, connection drift, credential-source isolation, explicit local-adapter loading, and project-result validation. |
+| `test_bitwarden_connection.py` | Synthetic bws profile parsing, XDG default and explicit local-adapter loading, connection drift, credential-source isolation, and project-result validation. |
 | `test_bitwarden_environments.py` | Synthetic exact-name Bitwarden reads/writes, previewed upload, fresh-clone dotenv recovery, response isolation, portable round trips, and atomic replacement. |
 | `test_bitwarden_actions.py` | Synthetic Bitwarden-to-GitHub standby preview/apply plus dual-provider artifact generation, selectors, aliases/defaults, scope isolation, stdin writes, read-back verification, partial failure, and value-free metadata. |
 | `test_vault_features.py` | Project-origin namespace normalization, dotenv and two-stage migration contracts, split archive/restore/show boundaries, remote Actions type checks, persistent exports, ephemeral `act` lifecycle, and workflow-wiring checks. |

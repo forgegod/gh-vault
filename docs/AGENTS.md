@@ -11,6 +11,7 @@ Own current architecture, security boundaries, release operations, capability ev
 - `architecture.md` — runtime boundaries, data flow, maintenance structure, and non-goals.
 - `security.md` — secret/plaintext boundaries and external-service evidence limits.
 - `design-decisions.md` — rationale for durable cross-cutting choices, not progress.
+- `README.md`, `architecture.md`, and `security.md` document the manual private Bitwarden adapter checkout; none may imply gh-vault distributes or updates it.
 - `product/` — current capability contracts and executable evidence.
 - `changes/` — active change progress, archived receipts, and optional review packages.
 

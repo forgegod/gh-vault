@@ -112,6 +112,11 @@ def default_bws_config() -> Path:
     return Path.home() / ".config" / "bws" / "config"
 
 
+def default_adapter_path() -> Path:
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return data_home / "gh-vault" / "adapters" / "gh-vault-bws"
+
+
 def _parse_known_bws_toml(text: str) -> dict[str, object]:
     profiles: dict[str, dict[str, str]] = {}
     current: dict[str, str] | None = None

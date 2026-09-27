@@ -5,7 +5,8 @@
 gh-vault is a Linux-oriented Python 3.10+ command-line application for named
 GitHub tokens, typed project environments, Actions values, workflow wiring, and
 explicit Bitwarden project access and standby publication through an
-operator-held local adapter.
+operator-held local adapter. Bitwarden commands default to one operator-managed
+XDG data checkout; an explicit CLI path remains available for another checkout.
 The `forgegod-gh-vault` distribution installs the `gh-vault` executable;
 `python -m gh_vault` delegates to the same dispatcher. Argparse displays the
 same product label. The package has no declared third-party Python runtime
@@ -22,7 +23,7 @@ executable evidence. [README](../README.md) is the operator command guide;
 | --- | --- | --- |
 | `src/gh_vault/cli.py` | Argparse commands, dispatch, output, exit handling, process handoff | TTY/stdin, stdout/stderr, exec |
 | `src/gh_vault/store.py` | Token metadata, vault backend, public environment store, value-free standby metadata | `pass`, restrictive JSON files |
-| `src/gh_vault/bitwarden.py` | bws profile resolution, local adapter loading, project/environment inspection, read, and verified write-result validation | Operator bws config and local `gh_vault_bws` checkout |
+| `src/gh_vault/bitwarden.py` | bws profile resolution, default/local adapter loading, project/environment inspection, read, and verified write-result validation | Operator bws config and XDG data or explicit `gh_vault_bws` checkout |
 | `src/gh_vault/github.py` | Token scope/expiration inspection | HTTPS GET to GitHub user API |
 | `src/gh_vault/envfiles.py` | Dotenv syntax, origin identity, archive/restore/migration | Git origin lookup, explicit file inputs |
 | `src/gh_vault/actions.py` | Actions selection, sync/check/import, verified standby publication, dual-provider generation, act execution, workflow scanning | `gh`, act child, local workflow files |
@@ -35,7 +36,10 @@ not a blanket catch for every OS error or malformed input.
 
 1. `set` validates input syntax, attempts GitHub inspection, stores the token
    through `pass`, then records non-secret profile metadata and selection.
-2. Bitwarden connection setup reads one explicit named bws profile, validates
+2. Bitwarden commands select the manually managed checkout at
+   `${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws` unless
+   `--adapter-path` explicitly overrides it. gh-vault neither creates nor updates
+   that checkout. Connection setup reads one explicit named bws profile, validates
    and records its HTTPS endpoint pair plus expected organization, and optionally
    stores a separate access token through `pass`. Project resolution revalidates
    the current Git origin and endpoint binding before passing one explicit UUID
@@ -78,6 +82,7 @@ not a blanket catch for every OS error or malformed input.
 | Tokens | `pass`: `gh-vault/<profile>` | Encrypted backend; single-line token |
 | Bitwarden connections | XDG `gh-vault/config.json` | bws config/profile, resolved endpoint pair, expected organization UUID |
 | Bitwarden access tokens | `pass`: `gh-vault/bitwarden/<connection>` or selected `BWS_ACCESS_TOKEN` | Separate credential source with no fallback |
+| Private Bitwarden adapter | XDG data `gh-vault/adapters/gh-vault-bws/` | Operator-created executable checkout; not config metadata, a package registry, or an update channel |
 | Standby publication metadata | XDG `gh-vault/publications/<host>/<path>/env[.<profile>].standby.json` | Version 1, exact source origin, destination scope, source IDs, remote revisions, and value-free per-key results |
 | Generated dual-provider fragment | Operator-selected file or stdout | Mode `0644` when written; source UUIDs, aliases, variable defaults, pinned action, selector, output checks, and duplicated consumer command; no values/hashes |
 | Public variables | XDG `gh-vault/environments/<host>/<path>/env[.<profile>].variables.json` | Version 1, exact origin, string values |
@@ -86,7 +91,8 @@ not a blanket catch for every OS error or malformed input.
 | Archived template | Same vault base, `env[.<profile>].example` | Raw template text; present only for secret-bearing archives |
 | Explicit legacy input | Same vault base, `env[.<profile>].json` | Version 2; read only by archive migration |
 
-The XDG base is `${XDG_CONFIG_HOME:-~/.config}`. The password store root is
+The XDG config base is `${XDG_CONFIG_HOME:-~/.config}` and the XDG data base is
+`${XDG_DATA_HOME:-~/.local/share}`. The password store root is
 `${PASSWORD_STORE_DIR:-~/.password-store}`. GPG owns unlock lifetime. Generated
 plaintext environments/exports are local artifacts, not repository records.
 

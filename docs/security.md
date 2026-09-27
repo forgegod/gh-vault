@@ -41,7 +41,8 @@ identity. No separate telemetry service is implemented.
 Bitwarden project resolution and environment restore/upload never send a token or
 managed value through argv or a child environment. They validate one named bws
 profile and current Git origin before reading the selected credential, then invoke
-only an explicitly selected local `gh_vault_bws` package in-process. Ambient
+the operator-created XDG data checkout or an explicit `--adapter-path` local
+`gh_vault_bws` package in-process. Ambient
 `BWS_CONFIG_FILE`, `BWS_PROFILE`, and `BWS_SERVER_URL` overrides are rejected.
 Adapter stdout/stderr and raw exception text are discarded. Environment reads
 require exact declared names, canonical entry IDs, configured organization and
@@ -81,6 +82,9 @@ make an untrusted consumer safe.
 - Bitwarden adapter authentication state uses a mode-`0700` temporary directory
   for one request and is removed on return. No adapter state path is stored in
   repository or connection metadata.
+- The default adapter checkout is executable operator-owned code below XDG data;
+  gh-vault neither creates, fetches, updates, nor applies modes to it. Create its
+  parent directory privately before cloning the approved private repository.
 - Bitwarden dotenv recovery writes and fsyncs a mode-`0600` adjacent temporary
   file before atomic replacement. Validation and retrieval failures leave an old
   target intact; this is per-file replacement, not a remote/local transaction.

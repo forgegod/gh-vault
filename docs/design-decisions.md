@@ -47,11 +47,13 @@ fallback is used when selection is absent.
 
 The published package records only value-free named-connection metadata and a
 versioned interface for one explicit project lookup. The adapter implementation
-and SDK dependency remain in a separately licensed private sibling checkout that
-the operator supplies by local path; gh-vault does not fetch, install, vendor, or
-submodule it. This preserves the public distribution boundary without replacing
-safe in-process credential transfer with argv, raw REST, or application-owned
-cryptography.
+and SDK dependency remain in a separately licensed private checkout. gh-vault
+defaults to `${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws`,
+which the operator creates and updates manually; `--adapter-path` selects a
+different checkout explicitly. gh-vault does not fetch, install, vendor, or
+submodule the adapter. This preserves the public distribution boundary without
+replacing safe in-process credential transfer with argv, raw REST, or
+application-owned cryptography.
 
 Connection setup resolves an existing named bws profile before any credential is
 read. Each project request rechecks that endpoint pair and rejects ambient bws

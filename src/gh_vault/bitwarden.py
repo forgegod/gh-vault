@@ -15,7 +15,7 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from .store import BitwardenConnection, StoreError
+from .store import BitwardenConnection, BitwardenProfileBinding, StoreError, VaultStore
 
 ADAPTER_API_VERSION = 1
 BWS_OVERRIDE_ENV = ("BWS_CONFIG_FILE", "BWS_PROFILE", "BWS_SERVER_URL")
@@ -220,6 +220,59 @@ def reject_bws_overrides(environment: Mapping[str, str] | None = None) -> None:
         raise StoreError(
             "conflicting bws environment override: " + ", ".join(conflicts)
         )
+
+
+def _selected_access_token(
+    store: VaultStore,
+    connection: str,
+    credential_source: str,
+) -> str:
+    if credential_source == "env":
+        access_token = os.environ.get("BWS_ACCESS_TOKEN", "")
+        if not access_token:
+            raise StoreError("BWS_ACCESS_TOKEN is required for a Bitwarden-backed profile")
+    elif credential_source == "vault":
+        access_token = store.get_bitwarden_credential(connection)
+    else:
+        raise StoreError("Bitwarden profile binding has an invalid credential source")
+    if "\n" in access_token or "\r" in access_token:
+        raise StoreError("Bitwarden access token must be a non-empty single line")
+    return access_token
+
+
+def resolve_bound_profile_token(
+    store: VaultStore,
+    binding: BitwardenProfileBinding,
+) -> str:
+    connection = store.get_bitwarden_connection(binding.connection)
+    assert_connection_current(connection)
+    reject_bws_overrides()
+    adapter = load_local_adapter(
+        Path(binding.adapter_path),
+        required_operations=("read_environment",),
+    )
+    try:
+        access_token = _selected_access_token(
+            store,
+            binding.connection,
+            binding.credential_source,
+        )
+    except Exception:
+        adapter.close()
+        raise
+    entries = read_environment_entries(
+        adapter,
+        connection,
+        access_token,
+        binding.project_id,
+        (binding.key,),
+    )
+    entry = entries[0]
+    if entry.entry_id != binding.entry_id:
+        raise StoreError("Bitwarden-backed profile entry no longer matches its binding")
+    if not entry.value or "\n" in entry.value or "\r" in entry.value:
+        raise StoreError("Bitwarden-backed profile token must be a non-empty single line")
+    return entry.value
 
 
 def _adapter_modules() -> dict[str, ModuleType]:

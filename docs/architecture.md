@@ -34,8 +34,13 @@ not a blanket catch for every OS error or malformed input.
 
 ## Data flow and persistence
 
-1. `set` validates input syntax, attempts GitHub inspection, stores the token
-   through `pass`, then records non-secret profile metadata and selection.
+1. `set` validates input syntax, attempts GitHub inspection, stores a local
+   token through `pass`, then records non-secret profile metadata and selection.
+   `bind-bitwarden` instead reads one exact existing Bitwarden project entry,
+   validates it as a GitHub token, and records only its connection, project/entry
+   IDs, expected key, adapter path, and selected credential source. Bound-profile
+   consumers repeat that exact remote validation on demand; no token is copied,
+   cached, or allowed to fall back to `pass`.
 2. Bitwarden commands select the manually managed checkout at
    `${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws` unless
    `--adapter-path` explicitly overrides it. gh-vault neither creates nor updates
@@ -78,8 +83,9 @@ not a blanket catch for every OS error or malformed input.
 
 | Artifact | Format/location | Boundary |
 | --- | --- | --- |
-| Profile metadata | XDG `gh-vault/config.json` | Profile names, scopes, notes, expiration, active selection |
-| Tokens | `pass`: `gh-vault/<profile>` | Encrypted backend; single-line token |
+| Profile metadata | XDG `gh-vault/config.json` | Profile names, scopes, notes, expiration, active selection, and value-free Bitwarden bindings |
+| Local tokens | `pass`: `gh-vault/<profile>` | Encrypted backend; single-line token for pass-backed profiles only |
+| Bound tokens | One exact Bitwarden project entry | Read through the selected adapter on demand; no local token payload or cache |
 | Bitwarden connections | XDG `gh-vault/config.json` | bws config/profile, resolved endpoint pair, expected organization UUID |
 | Bitwarden access tokens | `pass`: `gh-vault/bitwarden/<connection>` or selected `BWS_ACCESS_TOKEN` | Separate credential source with no fallback |
 | Private Bitwarden adapter | XDG data `gh-vault/adapters/gh-vault-bws/` | Operator-created executable checkout; not config metadata, a package registry, or an update channel |

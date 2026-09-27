@@ -7,7 +7,7 @@
 
 - `run-act -- act ...` and `run-act -- gh act ...` create separate secret/variable files under a `0700` temporary directory, append managed `--secret-file`/`--var-file` flags, and return the child status. Both files exist with `0600` mode even for empty selections.
 - Caller-supplied managed flags are rejected before temporary allocation. The temporary directory is removed after normal success, nonzero child exit, or a child launch error.
-- `secret export-act` writes explicit persistent files for nonempty kinds, at `0600` after writing. Multiline values are encoded with `@base64:`. This path can use a passed vault store to resolve profile references.
+- `secret export-act` writes explicit persistent files for nonempty kinds, at `0600` after writing. Multiline values are encoded with `@base64:`. This path can use a passed vault store to resolve local or on-demand Bitwarden-bound profile references.
 
 ## Implementation
 

@@ -7,7 +7,7 @@
   <a href="https://pypi.org/project/forgegod-gh-vault/"><img src="https://img.shields.io/pypi/v/forgegod-gh-vault?logo=pypi&label=PyPI" alt="PyPI"></a>
 </p>
 
-`gh-vault` keeps named GitHub tokens and secret project values in GPG-encrypted `pass` entries while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, checks workflow wiring, and resolves, restores, or explicitly uploads Bitwarden dotenv values through an operator-held local adapter. Secret values never enter public metadata or ordinary command output.
+`gh-vault` keeps named GitHub tokens either in GPG-encrypted `pass` entries or as on-demand bindings to exact Bitwarden project entries, while allowing explicitly declared public variables in a restrictive XDG archive. It archives and restores per-project environments, syncs declared GitHub Actions values, runs local Actions with ephemeral files, checks workflow wiring, and resolves, restores, or explicitly uploads Bitwarden dotenv values through an operator-held local adapter. Secret values never enter public metadata or ordinary command output.
 
 ## Requirements
 
@@ -94,7 +94,8 @@ The `--force` flag in snapshot mode only matters when the `forgegod-gh-vault` di
 
 | Artifact | Location | Mode |
 |---|---|---|
-| Token values | `pass` entries under `gh-vault/<profile>` | GPG-encrypted |
+| Local token values | `pass` entries under `gh-vault/<profile>` | GPG-encrypted; used only by `set` profiles |
+| Bitwarden-bound token values | One exact Bitwarden project entry | Read on demand; only value-free binding metadata is local |
 | Bitwarden access tokens | `pass` entries under `gh-vault/bitwarden/<connection>` | GPG-encrypted; optional alternative to `BWS_ACCESS_TOKEN` |
 | Bitwarden connection metadata | `${XDG_CONFIG_HOME:-~/.config}/gh-vault/config.json` | Value-free config/profile, HTTPS endpoints, and organization UUID |
 | Archived secret values and eligible templates | `pass` entries under `gh-vault/projects/<host>/<owner>/<repo>/` | GPG-encrypted |
@@ -156,6 +157,34 @@ printf '%s' "$TOKEN" | gh-vault find --stdin
 ```
 
 `find` prints each matching profile name and exits `0` when at least one match exists. An unknown token produces no output and exits `1`. The token is accepted only through explicit `--stdin`; empty and multiline values are rejected.
+
+### Bind a profile to an existing Bitwarden secret
+
+`bind-bitwarden` creates a new token profile whose value is read from one exact
+existing Bitwarden project entry whenever a token consumer needs it. It validates
+the selected connection, endpoint binding, project, key, entry ID, adapter, and
+credential source before storing local metadata; it then validates the token with
+GitHub unless `--scopes` explicitly permits unavailable inspection.
+
+```sh
+gh-vault bind-bitwarden ci-bws \
+  --connection eu-production \
+  --project-id 22222222-2222-4222-8222-222222222222 \
+  --entry-id 33333333-3333-4333-8333-333333333333 \
+  --key GITHUB_TOKEN \
+  --credential-source vault
+```
+
+The profile stores no PAT, hash, or cached value. Every `run`, `output`,
+`git-credential`, dotenv profile reference, and `find` resolution rereads and
+validates the same remote entry. `--credential-source env` uses only
+`BWS_ACCESS_TOKEN`; `vault` uses only the separate `pass` credential for the
+selected Bitwarden connection. Neither source falls back to the other.
+
+Binding refuses an existing profile name, does not migrate a local `pass` token,
+and never changes the Bitwarden entry. To replace a local profile, create and
+verify a new bound profile, activate it, then explicitly remove the old local
+profile. Removing a bound profile only removes local metadata.
 
 ### Remove a profile
 
@@ -581,7 +610,7 @@ LOCAL_ONLY=local
 
 The directive applies only to the immediately following assignment. Unmarked values are local-only and ignored by Actions commands. Legacy `GH_SECRET_*` and `GH_VAR_*` declarations are rejected. Names matching `GITHUB_*`, `RUNNER_*`, `CI`, or `GH_TOKEN` are reserved and skipped — except for profile-referenced secrets, which intentionally override the reserved guard so `GITHUB_TOKEN` can be resolved from a stored profile.
 
-The `# gh-vault: secret <profile>` shape references a token stored in `pass` under `gh-vault/<profile>`. The value on the next line is irrelevant — leave it empty. Supported resolution paths are:
+The `# gh-vault: secret <profile>` shape references a local or Bitwarden-bound token profile. The value on the next line is irrelevant — leave it empty. Supported resolution paths are:
 
 - `gh-vault env run` injects the resolved token into the child process environment under the assignment key.
 - `gh-vault secret sync` and `secret export-act` resolve the token and push/write it; `secret sync --migrate-types` and `--prune` apply the same way as for literal secrets.
@@ -622,7 +651,7 @@ GITHUB_TOKEN=
 Create the replacement PAT in GitHub's token settings with the same required access. `gh auth refresh` only reauthorizes the GitHub CLI's OAuth credentials and scopes; neither it nor gh-vault can create or rotate a PAT. Keep the current PAT valid until the replacement is verified.
 
 ```sh
-# Replace the profile's encrypted pass entry; the PAT never appears in argv.
+# Replace a local profile's encrypted pass entry; the PAT never appears in argv.
 printf '%s' "$NEW_PAT" | gh-vault set ci-pat --stdin
 
 # Resolve the profile reference and update the GitHub Actions Secret.
@@ -633,7 +662,9 @@ gh-vault secret sync
 gh-vault secret check
 ```
 
-Then run the workflow or authenticated operation that consumes `GITHUB_TOKEN`. `secret check` cannot confirm a Secret's value because GitHub never returns stored Secret values. Revoke the previous PAT in GitHub only after that operation succeeds. This process replaces the vault profile and GitHub Actions Secret; it does not archive the profile reference or modify the `.env` placeholder.
+Then run the workflow or authenticated operation that consumes `GITHUB_TOKEN`. `secret check` cannot confirm a Secret's value because GitHub never returns stored Secret values. Revoke the previous PAT in GitHub only after that operation succeeds. This process replaces the local profile and GitHub Actions Secret; it does not archive the profile reference or modify the `.env` placeholder.
+
+For a Bitwarden-bound profile, rotate the existing remote entry through the approved Bitwarden operation. The next profile consumer rereads it; if rotation recreates the entry with a new ID, create and verify a new binding before switching consumers.
 
 ### Migrate legacy declarations and archives
 
@@ -785,7 +816,7 @@ Excludes GitHub-provided names like `GITHUB_TOKEN`. Exits nonzero for unreferenc
 | `KEY=@base64:data` | Base64-decodes the data |
 | `# gh-vault: secret` | Marks the immediately following assignment as a GitHub Secret |
 | `# gh-vault: variable` | Marks the immediately following assignment as a GitHub Variable |
-| `# gh-vault: secret <profile>` | Resolves the assignment to the token stored under `gh-vault/<profile>` in `pass`; the literal value is ignored |
+| `# gh-vault: secret <profile>` | Resolves the assignment to the named local or Bitwarden-bound token profile; the literal value is ignored |
 | `# comment` | Comment line, ignored |
 | `value # trailing` | Inline comment stripped (space before `#` required) |
 
@@ -807,7 +838,7 @@ Values with embedded newlines are stored as `@base64:` when written to `.env` or
 
 ## Security model
 
-- Local tokens, secret archives, and eligible archive templates live only in `pass` under `gh-vault/`; explicit Bitwarden upload writes managed values only to the selected remote project through the local adapter.
+- Local tokens, secret archives, and eligible archive templates live in `pass` under `gh-vault/`; Bitwarden-bound profiles read one exact remote project entry on demand and keep only value-free metadata locally. Explicit Bitwarden upload writes managed values only to the selected remote project through the local adapter.
 - Bitwarden connection metadata contains no credential. Bitwarden access tokens come only from the explicitly selected `BWS_ACCESS_TOKEN` or `pass` entry below `gh-vault/bitwarden/`; there is no fallback, GitHub validation, child-process injection, or token output.
 - Bitwarden project/environment access loads only the explicit local adapter path, validates endpoint binding before credential access, and uses temporary per-request state. Environment inspection/read/write responses are accepted only for requested names, exact IDs and operations, the configured organization, and the selected project; write values must match read-back exactly. The adapter is trusted same-user code, not a sandbox.
 - Only values explicitly marked `# gh-vault: variable` may enter the public XDG archive. Operators must classify them as safe for clear-text local storage before archiving or migration.

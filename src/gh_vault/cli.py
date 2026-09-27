@@ -32,10 +32,10 @@ from .actions import (
     suggested_env,
     sync,
 )
-from .bitwarden import BitwardenWrite, assert_connection_current, default_adapter_path, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_project, write_environment
+from .bitwarden import BitwardenWrite, assert_connection_current, canonical_uuid, default_adapter_path, default_bws_config, inspect_environment, load_bws_endpoints, load_local_adapter, organization_uuid, project_uuid, read_environment, read_environment_entries, reject_bws_overrides, resolve_bound_profile_token, resolve_project, write_environment
 from .envfiles import apply_bitwarden_restore, archive_environment, example_file_for, format_dotenv_value, list_environments, migrate_environment_archive, prepare_bitwarden_actions, prepare_bitwarden_restore, prepare_bitwarden_upload, project_namespace, restore_environment, show_environment
 from .github import TokenMetadata, inspect_token
-from .store import ActionsPublicationStore, BitwardenConnection, EnvironmentStore, Profile, StoreError, VaultStore
+from .store import ActionsPublicationStore, BitwardenConnection, BitwardenProfileBinding, EnvironmentStore, Profile, StoreError, VaultStore
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,63})$")
 PROFILE_NAME_ERROR = "must be 1-64 characters; first character must be a letter or digit, the rest may be letters, digits, dot, underscore, or hyphen"
@@ -97,6 +97,16 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     set_profile = commands.add_parser("set", help="create or replace a profile", description="Validate a GitHub token and create or replace its named profile in the encrypted vault.")
     set_profile.add_argument("name", type=profile_name, help="profile name"); set_profile.add_argument("--scopes", type=parse_scopes, help="comma-separated scopes; disables automatic classic-PAT detection"); set_profile.add_argument("--note", default="", help="operator note"); set_profile.add_argument("--stdin", action="store_true", help="read the token from standard input"); set_profile.set_defaults(force=True)
+    bind_profile = commands.add_parser("bind-bitwarden", help="bind a profile to one Bitwarden secret", description="Validate one exact Bitwarden project entry and create a profile that resolves it on demand without copying the GitHub token locally.")
+    bind_profile.add_argument("name", type=profile_name, help="new profile name")
+    bind_profile.add_argument("--connection", type=profile_name, required=True, help="configured Bitwarden connection")
+    bind_profile.add_argument("--project-id", type=project_uuid, required=True, help="canonical Bitwarden project UUID")
+    bind_profile.add_argument("--entry-id", type=lambda value: canonical_uuid(value, "Bitwarden secret"), required=True, help="canonical Bitwarden secret UUID")
+    bind_profile.add_argument("--key", required=True, help="exact Bitwarden secret key")
+    bind_profile.add_argument("--adapter-path", type=Path, default=default_adapter_path(), help="local checkout root containing gh_vault_bws; defaults to the XDG data checkout")
+    bind_profile.add_argument("--credential-source", choices=("env", "vault"), default="env", help="read BWS_ACCESS_TOKEN or the encrypted connection credential; never falls back")
+    bind_profile.add_argument("--scopes", type=parse_scopes, help="comma-separated scopes; permits binding when GitHub inspection is unavailable")
+    bind_profile.add_argument("--note", default="", help="operator note")
     commands.add_parser("list", help="list token profiles", description="Display stored token profiles, their scopes, expiration, and active selection.")
     activate = commands.add_parser("activate", help="select the default profile", description="Select the token profile used when a command does not name one."); activate.add_argument("name", type=profile_name, help="profile name")
     commands.add_parser("status", help="show the active profile", description="Show the profile selected as the default GitHub token.")
@@ -696,16 +706,45 @@ def _set(store: VaultStore, args: argparse.Namespace) -> int:
     return 0
 
 
+def _bind_bitwarden(store: VaultStore, args: argparse.Namespace) -> int:
+    if args.name in {profile.name for profile in store.profiles()}:
+        raise StoreError(f"profile '{args.name}' already exists")
+    binding = BitwardenProfileBinding(
+        connection=args.connection,
+        project_id=args.project_id,
+        entry_id=args.entry_id,
+        key=args.key,
+        credential_source=args.credential_source,
+        adapter_path=str(args.adapter_path.expanduser().resolve()),
+    )
+    token = _validate_token_format(resolve_bound_profile_token(store, binding))
+    validated = True
+    try:
+        metadata = inspect_token(token)
+    except StoreError:
+        if args.scopes is None:
+            raise
+        validated = False
+        metadata = TokenMetadata((), None)
+    scopes = metadata.scopes if args.scopes is None else args.scopes
+    store.bind_bitwarden(Profile(args.name, scopes, args.note, metadata.expires_at, binding))
+    if validated:
+        print(f"Validated GitHub token: scopes={','.join(metadata.scopes) or '-'}{f' expires={metadata.expires_at}' if metadata.expires_at else ''}")
+    print(f"Bound Bitwarden profile: {args.name}")
+    return 0
+
+
 def _list(store: VaultStore) -> int:
     active = store.active()
     for profile in store.profiles():
-        print(f"{'*' if profile.name == active else ' '} {profile.name:<20} scopes={','.join(profile.scopes) or '-'}{f' expires={profile.expires_at}' if profile.expires_at else ''}{f'  {profile.note}' if profile.note else ''}")
+        source = " source=bitwarden" if profile.bitwarden is not None else ""
+        print(f"{'*' if profile.name == active else ' '} {profile.name:<20} scopes={','.join(profile.scopes) or '-'}{f' expires={profile.expires_at}' if profile.expires_at else ''}{source}{f'  {profile.note}' if profile.note else ''}")
     if not store.profiles(): print("No token profiles configured.")
     return 0
 
 
 def _status(store: VaultStore) -> int:
-    store.require_backend(); active = store.active()
+    active = store.active()
     if not active:
         print("Active profile: none"); return 1
     store.get(active); print(f"Active profile: {active}"); return 0
@@ -793,6 +832,7 @@ def _run_sync(store: VaultStore, args: argparse.Namespace, kind: Literal["secret
 
 def dispatch(args: argparse.Namespace, store: VaultStore, directory: Path = Path.cwd()) -> int:
     if args.command == "set": return _set(store, args)
+    if args.command == "bind-bitwarden": return _bind_bitwarden(store, args)
     if args.command == "list": return _list(store)
     if args.command == "activate": store.activate(args.name); print(f"Active profile: {args.name}"); return 0
     if args.command == "status": return _status(store)

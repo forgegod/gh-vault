@@ -17,7 +17,8 @@ review assets, or fixtures.
 
 | Data | Permitted destination | Operator responsibility |
 | --- | --- | --- |
-| GitHub token | `pass`, in-process memory, GitHub inspection request, selected child environment, explicit credential stdout | Restrict profile access and downstream consumers |
+| Pass-backed GitHub token | `pass`, in-process memory, GitHub inspection request, selected child environment, explicit credential stdout | Restrict profile access and downstream consumers |
+| Bitwarden-bound GitHub token | One exact Bitwarden project entry, in-process local-adapter response, GitHub inspection request, selected child environment, explicit credential stdout | Restrict project access and keep the binding's entry identity stable |
 | Bitwarden access token | `pass` below `gh-vault/bitwarden/` or selected `BWS_ACCESS_TOKEN`, in-process local-adapter call | Provision externally; select one source explicitly and restrict the adapter checkout |
 | Bitwarden connection metadata | Restrictive XDG config JSON, ordinary connection-list output | Treat endpoint paths and organization IDs as local operator metadata, not credentials or authorization proof |
 | Typed secret | Encrypted archive, selected Bitwarden project, in-process adapter request/response, selected child/process stdin, requested plaintext restore/export | Do not mark it `variable`; authorize remote upload explicitly |
@@ -52,6 +53,13 @@ selected credential. Upload defaults to value-free inspection; apply validates
 exact operation, ID, name, value, organization, and project membership from
 read-back before claiming success. The adapter remains trusted same-user code,
 not a sandbox.
+
+`bind-bitwarden` reads one exact entry through the same local adapter, validates
+its project, organization, key, and entry ID before storing value-free local
+metadata, then validates its GitHub token syntax and optional GitHub metadata.
+Every later profile read repeats the endpoint/ambient-override checks and exact
+entry validation. Binding never copies, hashes, caches, or falls back to a local
+token; removing the profile deletes only local metadata, not the Bitwarden entry.
 
 Bitwarden standby publication passes resolved values to `gh secret set` or
 `gh variable set` only on stdin. It discards all `gh` stderr rather than relaying

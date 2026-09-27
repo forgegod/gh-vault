@@ -73,6 +73,7 @@ No active records.
 
 ## Archive
 
+- [CHG-006 — Bitwarden-backed token profiles](archive/CHG-006-bitwarden-token-profile-bindings.md) — done; explicit on-demand Bitwarden bindings with exact remote-entry validation and no local token copy.
 - [CHG-005 — Default private Bitwarden adapter path](archive/CHG-005-default-private-bitwarden-adapter-path.md) — done; XDG data default with manual private checkout instructions and an explicit override.
 - [CHG-004 — Bitwarden environments and reversible Actions delivery](archive/CHG-004-bitwarden-environments.md) — done; bounded live synthetic recovery, standby publication, and two-provider Actions canary receipt.
 - [CHG-001 — Adopt source-backed maintenance records](archive/CHG-001-maintenance-adoption.md) — done; source-backed adoption and local verification receipt.

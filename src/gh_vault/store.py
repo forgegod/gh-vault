@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 STORE_PREFIX = "gh-vault"
 ENVIRONMENT_INDEX_VERSION = 1
@@ -23,19 +24,86 @@ class StoreError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class BitwardenProfileBinding:
+    connection: str
+    project_id: str
+    entry_id: str
+    key: str
+    credential_source: str
+    adapter_path: str
+
+    @classmethod
+    def from_dict(cls, value: object) -> "BitwardenProfileBinding":
+        fields = {
+            "connection",
+            "project_id",
+            "entry_id",
+            "key",
+            "credential_source",
+            "adapter_path",
+        }
+        if not isinstance(value, dict) or set(value) != fields:
+            raise StoreError("Bitwarden profile binding has invalid data")
+        if (
+            not isinstance(value["connection"], str)
+            or not PROFILE_NAME.fullmatch(value["connection"])
+            or not isinstance(value["key"], str)
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value["key"])
+            or not isinstance(value["credential_source"], str)
+            or value["credential_source"] not in {"env", "vault"}
+            or not isinstance(value["adapter_path"], str)
+            or not Path(value["adapter_path"]).is_absolute()
+        ):
+            raise StoreError("Bitwarden profile binding has invalid data")
+        canonical: dict[str, str] = {}
+        for field in ("project_id", "entry_id"):
+            raw = value[field]
+            try:
+                parsed = UUID(raw)
+            except (AttributeError, TypeError, ValueError):
+                raise StoreError("Bitwarden profile binding has invalid data") from None
+            if not isinstance(raw, str) or raw != str(parsed) or parsed.int == 0:
+                raise StoreError("Bitwarden profile binding has invalid data")
+            canonical[field] = raw
+        return cls(
+            connection=value["connection"],
+            project_id=canonical["project_id"],
+            entry_id=canonical["entry_id"],
+            key=value["key"],
+            credential_source=value["credential_source"],
+            adapter_path=value["adapter_path"],
+        )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "connection": self.connection,
+            "project_id": self.project_id,
+            "entry_id": self.entry_id,
+            "key": self.key,
+            "credential_source": self.credential_source,
+            "adapter_path": self.adapter_path,
+        }
+
+
+@dataclass(frozen=True)
 class Profile:
     name: str
     scopes: tuple[str, ...] = ()
     note: str = ""
     expires_at: str | None = None
+    bitwarden: BitwardenProfileBinding | None = None
 
     @classmethod
     def from_dict(cls, name: str, value: dict[str, Any]) -> "Profile":
         expires_at = value.get("expires_at")
-        return cls(name, tuple(value.get("scopes", ())), value.get("note", ""), expires_at if isinstance(expires_at, str) else None)
+        binding = BitwardenProfileBinding.from_dict(value["bitwarden"]) if "bitwarden" in value else None
+        return cls(name, tuple(value.get("scopes", ())), value.get("note", ""), expires_at if isinstance(expires_at, str) else None, binding)
 
     def as_dict(self) -> dict[str, Any]:
-        return {"scopes": list(self.scopes), "note": self.note, "expires_at": self.expires_at}
+        data: dict[str, Any] = {"scopes": list(self.scopes), "note": self.note, "expires_at": self.expires_at}
+        if self.bitwarden is not None:
+            data["bitwarden"] = self.bitwarden.as_dict()
+        return data
 
 
 @dataclass(frozen=True)
@@ -120,6 +188,8 @@ class VaultStore:
         return self.load()["active"]
 
     def put(self, profile: Profile, token: str, *, replace: bool = False) -> None:
+        if profile.bitwarden is not None:
+            raise StoreError("Bitwarden-backed profiles must be created with bind-bitwarden")
         data = self.load()
         if profile.name in data["profiles"] and not replace:
             raise StoreError(f"profile '{profile.name}' already exists")
@@ -131,12 +201,29 @@ class VaultStore:
             data["active"] = profile.name
         self.save(data)
 
+    def bind_bitwarden(self, profile: Profile) -> None:
+        if profile.bitwarden is None:
+            raise StoreError("Bitwarden profile binding is required")
+        data = self.load()
+        if profile.name in data["profiles"]:
+            raise StoreError(f"profile '{profile.name}' already exists")
+        data["profiles"][profile.name] = profile.as_dict()
+        if data["active"] is None:
+            data["active"] = profile.name
+        self.save(data)
+
     def get(self, name: str | None = None) -> str:
         selected = name or self.active()
         if not selected:
             raise StoreError("no active profile; set or activate one first")
-        if selected not in self.load()["profiles"]:
+        data = self.load()
+        if selected not in data["profiles"]:
             raise StoreError(f"unknown profile: {selected}")
+        profile = Profile.from_dict(selected, data["profiles"][selected])
+        if profile.bitwarden is not None:
+            from .bitwarden import resolve_bound_profile_token
+
+            return resolve_bound_profile_token(self, profile.bitwarden)
         try:
             return self.get_secret(selected)
         except StoreError as exc:
@@ -153,7 +240,9 @@ class VaultStore:
         data = self.load()
         if name not in data["profiles"]:
             raise StoreError(f"unknown profile: {name}")
-        self.remove_secret(name)
+        profile = Profile.from_dict(name, data["profiles"][name])
+        if profile.bitwarden is None:
+            self.remove_secret(name)
         del data["profiles"][name]
         if data["active"] == name:
             data["active"] = None

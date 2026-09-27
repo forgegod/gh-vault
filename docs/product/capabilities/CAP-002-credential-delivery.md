@@ -5,9 +5,9 @@
 
 ## Behaviour
 
-- `find --stdin` compares a single-line candidate against configured token values in-process, prints matching profile names only, and returns `0` for a match or `1` silently for no match. It does not apply the stricter `set` length/alphabet gates.
-- `output [--name PROFILE]` intentionally prints only the selected token plus a newline, suitable for a consumer's stdin.
-- `run [--name PROFILE] -- COMMAND` copies the parent environment, overwrites `GH_TOKEN` and `GITHUB_TOKEN` with the selected token, and replaces the process with the command. It does not change the invoking shell.
+- `find --stdin` compares a single-line candidate against configured local or Bitwarden-bound token profiles in-process, prints matching profile names only, and returns `0` for a match or `1` silently for no match. It does not apply the stricter `set` length/alphabet gates.
+- `output [--name PROFILE]` intentionally prints only the selected token plus a newline, suitable for a consumer's stdin. A bound profile is read and identity-validated on demand first.
+- `run [--name PROFILE] -- COMMAND` copies the parent environment, overwrites `GH_TOKEN` and `GITHUB_TOKEN` with the selected token, and replaces the process with the command. It does not change the invoking shell; a bound profile has no local-token fallback.
 - `git-credential get` emits Git's username/password response only for HTTPS requests whose normalized host is `github.com`. Other hosts/protocols and `store`/`erase` produce no credentials.
 - Bitwarden commands use `${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws` by default. The operator manually creates and clones that private checkout; gh-vault never fetches, installs, or updates it. `--adapter-path` explicitly selects another checkout for one command.
 - `bitwarden project resolve` requires an explicit connection, canonical project UUID, and `env` or `vault` credential source. It validates the current Git origin and the saved bws profile's HTTPS endpoints before reading the selected token, rejects ambient bws endpoint/profile overrides, and never falls back between credential sources.
@@ -33,7 +33,7 @@
 - `tests/test_cli.py` — `test_find_prints_matching_profile_names_only`, `test_find_returns_one_without_output_when_token_is_unknown`, `test_find_requires_explicit_stdin`, and `test_find_rejects_empty_token` cover lookup outcomes.
 - `tests/test_cli.py` — `test_output_prints_only_selected_token`, `test_git_credential_returns_selected_token_only_for_github`, `test_run_executes_with_both_supported_environment_variables`, and `test_run_requires_a_command` prove response shapes and intercepted process handoff.
 - `tests/test_cli.py` — `test_parser_uses_public_command_name` and `test_project_declares_short_console_command` pin the shared parser label and declared console-script boundary. Isolated-install verification exercises the generated executable.
-- `tests/test_bitwarden_connection.py` — `test_default_adapter_path_uses_xdg_data_home`, `test_project_resolve_uses_default_adapter_path`, `test_project_resolve_uses_explicit_env_credential_without_github_inspection`, `test_project_resolve_uses_only_the_selected_vault_credential`, `test_project_resolve_rejects_bws_overrides_before_credential_access`, and `test_resolve_project_rejects_inaccessible_or_mismatched_results` prove the default and explicit project boundary with synthetic adapters.
+- `tests/test_bitwarden_profiles.py` — `test_bitwarden_profile_resolution_reads_and_validates_the_exact_bound_entry`, `test_bitwarden_profile_resolution_rejects_an_entry_id_change`, and the pre-adapter rejection tests prove on-demand bound-profile delivery with synthetic adapters.
 - Run `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_connection.py tests/test_cli.py`.
 - Credential tests use synthetic tokens; exec is intercepted. They do not authenticate Git or a downstream consumer.
 

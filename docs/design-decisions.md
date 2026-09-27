@@ -43,6 +43,20 @@ stdout commands provide explicit consumer boundaries. They do not make the
 child trusted or prevent it from logging credentials. No implicit profile
 fallback is used when selection is absent.
 
+## Bind Bitwarden tokens without mirroring them
+
+A named GitHub profile may explicitly bind to one existing Bitwarden project
+entry instead of storing a token in `pass`. The binding records only the named
+connection, canonical project and entry IDs, expected key, selected adapter
+path, and one credential source. Every consumer rechecks that immutable identity
+through the operator-held adapter before receiving the token in process. This
+keeps Bitwarden as the source of truth: there is no token cache, hash, pass
+fallback, automatic migration, background sync, or remote deletion on unbind.
+
+The binding command validates the remote token before local metadata is written.
+It is intentionally new-profile-only, so replacing a local profile remains an
+explicit operator transition after the remote token is independently verified.
+
 ## Keep Bitwarden SDK use behind an operator-held local boundary
 
 The published package records only value-free named-connection metadata and a

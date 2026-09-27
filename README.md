@@ -291,8 +291,8 @@ stdout, stderr, raw errors, access tokens, and project listings are not relayed.
 `bitwarden env upload` selects active `secret` and `variable` declarations from
 one explicit `.env` or `.env.<profile>`. It resolves explicit `@file:` and
 `@base64:` values before remote access, including trailing newlines; local-only
-assignments are excluded. Profile references and NUL values fail before
-credential or adapter access.
+assignments are excluded. Profile references, NUL values, and present-empty
+managed values fail before credential or adapter access.
 
 ```sh
 # Default: inspect exact names and print a value-free create/skip preview.

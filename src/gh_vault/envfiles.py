@@ -344,6 +344,8 @@ def prepare_bitwarden_upload(env_file: Path) -> BitwardenUploadPlan:
             )
         if "\0" in entry.value:
             raise StoreError(f"Bitwarden upload value for {entry.key} contains NUL")
+        if entry.value == "":
+            raise StoreError(f"Bitwarden upload value for {entry.key} must not be empty")
     if not managed:
         raise StoreError(f"Bitwarden upload source has no managed declarations: {env_file}")
     return BitwardenUploadPlan(env_file, managed)

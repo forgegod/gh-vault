@@ -567,7 +567,7 @@ def test_bitwarden_upload_preview_names_types_and_operations_without_values(
     env_file = tmp_path / ".env"
     env_file.write_text(
         "# gh-vault: secret\nREGION=synthetic-secret-value\n"
-        "# gh-vault: variable\nEMPTY=\n"
+        "# gh-vault: variable\nEMPTY=present\n"
         "LOCAL_ONLY=not-uploaded\n",
         encoding="utf-8",
     )
@@ -599,7 +599,7 @@ def test_bitwarden_upload_applies_resolved_values_and_verifies_readback(
     env_file = tmp_path / ".env"
     env_file.write_text(
         "# gh-vault: secret\nREGION=@file:payload.txt\n"
-        "# gh-vault: variable\nEMPTY=\n"
+        "# gh-vault: variable\nEMPTY=present\n"
         "# gh-vault: secret\nLITERAL_FILE=\"@file:must-remain-literal\"\n"
         "# gh-vault: variable\nLITERAL_BASE64='@base64:YWJj'\n"
         "LOCAL_ONLY=excluded\n",
@@ -626,7 +626,7 @@ def test_bitwarden_upload_applies_resolved_values_and_verifies_readback(
             "key": "REGION",
             "value": "first\nsecond\n",
         },
-        {"operation": "create", "id": None, "key": "EMPTY", "value": ""},
+        {"operation": "create", "id": None, "key": "EMPTY", "value": "present"},
         {
             "operation": "create",
             "id": None,
@@ -661,7 +661,7 @@ def test_bitwarden_upload_rerun_skips_existing_entry_without_creating_duplicate(
     env_file = tmp_path / ".env"
     env_file.write_text(
         "# gh-vault: secret\nREGION=current\n"
-        "# gh-vault: variable\nEMPTY=\n",
+        "# gh-vault: variable\nEMPTY=present\n",
         encoding="utf-8",
     )
     adapter = UploadAdapter(inspection("REGION"))
@@ -670,7 +670,7 @@ def test_bitwarden_upload_rerun_skips_existing_entry_without_creating_duplicate(
     assert cli.dispatch(upload_args(env_file, apply=True), store, tmp_path) == 0  # type: ignore[arg-type]
 
     assert adapter.write_requests[0]["entries"] == (
-        {"operation": "create", "id": None, "key": "EMPTY", "value": ""},
+        {"operation": "create", "id": None, "key": "EMPTY", "value": "present"},
     )
     assert capsys.readouterr().out.endswith("1 created, 0 updated; 1 existing value(s) left unchanged.\n")
 
@@ -701,7 +701,7 @@ def test_bitwarden_upload_inspection_failure_never_loads_writer(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("# gh-vault: variable\nEMPTY=\n", encoding="utf-8")
+    env_file.write_text("# gh-vault: variable\nEMPTY=present\n", encoding="utf-8")
     leaked = "synthetic-inspection-error"
 
     class FailingInspectionAdapter(UploadAdapter):
@@ -743,7 +743,7 @@ def test_bitwarden_upload_round_trips_into_a_second_synthetic_checkout(
     source_env = source_checkout / ".env"
     source_env.write_text(
         "# gh-vault: secret\nMULTILINE=@base64:Zmlyc3QKc2Vjb25kCg==\n"
-        "# gh-vault: variable\nEMPTY=\n"
+        "# gh-vault: variable\nEMPTY=present\n"
         "SOURCE_ONLY=excluded\n",
         encoding="utf-8",
     )
@@ -772,7 +772,7 @@ def test_bitwarden_upload_round_trips_into_a_second_synthetic_checkout(
     restored = parse_typed_dotenv(target_env)
     assert {entry.key: entry.value for entry in restored if entry.kind != "local"} == {
         "MULTILINE": "first\nsecond\n",
-        "EMPTY": "",
+        "EMPTY": "present",
     }
     assert target_env.read_text(encoding="utf-8").endswith("# TARGET_ONLY=excluded\n")
 
@@ -913,7 +913,7 @@ def test_bitwarden_upload_reports_uncertain_partial_failure_without_adapter_text
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("# gh-vault: variable\nEMPTY=\n", encoding="utf-8")
+    env_file.write_text("# gh-vault: variable\nEMPTY=present\n", encoding="utf-8")
     leaked = "permission denied for synthetic-secret-value"
     adapter = UploadAdapter(inspection(), RuntimeError(leaked))
     store = prepare_dispatch(monkeypatch, tmp_path, adapter)
@@ -961,13 +961,17 @@ def test_prepare_bitwarden_upload_requires_managed_values_and_rejects_nul(
     with pytest.raises(StoreError, match="REGION contains NUL"):
         envfiles.prepare_bitwarden_upload(env_file)
 
+    env_file.write_text("# gh-vault: variable\nEMPTY=\n", encoding="utf-8")
+    with pytest.raises(StoreError, match="EMPTY must not be empty"):
+        envfiles.prepare_bitwarden_upload(env_file)
+
 
 def test_upload_requires_adapter_capabilities_before_credential_access(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("# gh-vault: variable\nEMPTY=\n", encoding="utf-8")
+    env_file.write_text("# gh-vault: variable\nEMPTY=present\n", encoding="utf-8")
     package = tmp_path / "adapter" / "gh_vault_bws"
     package.mkdir(parents=True)
     package.joinpath("__init__.py").write_text(
@@ -999,7 +1003,7 @@ def test_upload_closes_preflighted_adapter_when_credential_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env_file = tmp_path / ".env"
-    env_file.write_text("# gh-vault: variable\nEMPTY=\n", encoding="utf-8")
+    env_file.write_text("# gh-vault: variable\nEMPTY=present\n", encoding="utf-8")
     adapter = UploadAdapter(inspection())
     store = prepare_dispatch(monkeypatch, tmp_path, adapter)
     monkeypatch.delenv("BWS_ACCESS_TOKEN")

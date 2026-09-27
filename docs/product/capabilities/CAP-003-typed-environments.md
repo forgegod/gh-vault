@@ -10,7 +10,7 @@
 - `# gh-vault: secret PROFILE` resolves through the selected named vault profile for `env run`, secret sync/export, and workflow selection. A variable directive cannot reference a profile. Missing profiles fail with the source location.
 - `env run -- COMMAND` injects selected typed values into a copy of the parent environment. Literal empty and reserved `GITHUB_*`, `RUNNER_*`, `CI`, and `GH_TOKEN` keys are skipped; profile references bypass that reserved-name filter. Local-only declarations are not added from the file.
 - Bitwarden recovery treats every typed template declaration as required, rejects profile references, and never requests untyped local keys. Local-only assignments remain commented in the generated dotenv.
-- Bitwarden upload selects active typed declarations from one explicit `.env`, resolves explicit transport markers, and rejects profile references or NUL before credential access. Local-only assignments are not inspected or written; secret/variable classification remains visible in the preview while both kinds are stored as encrypted Bitwarden entries.
+- Bitwarden upload selects active typed declarations from one explicit `.env`, resolves explicit transport markers, and rejects profile references, NUL, or present-empty managed values before credential access. Local-only assignments are not inspected or written; secret/variable classification remains visible in the preview while both kinds are stored as encrypted Bitwarden entries.
 - Generated literal values beginning `@file:` or `@base64:` are quoted; multiline values use UTF-8 base64. Parsing the generated assignment therefore preserves marker-prefixed, Unicode, empty, and trailing-newline content without following a source-machine path.
 
 ## Implementation

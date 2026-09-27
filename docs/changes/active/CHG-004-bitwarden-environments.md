@@ -230,7 +230,7 @@ DOX, README/security contracts where applicable, and this record together.
 | 4 | Explicit upload to Bitwarden | done (55 focused tests; `make verify`: 275 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
 | 5 | Publish GitHub standby values | done (206 focused tests; record validation; `make verify`: 287 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
 | 6 | Dual-provider Actions and offline diagnostics | done (36 focused tests; record validation; `make verify`: 303 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
-| 7 | Integrate recovery evidence and current-state records | pending | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
+| 7 | Integrate recovery evidence and current-state records | in-progress | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
 
 ## Phase 1 — Resolve integration contracts and approval
 
@@ -511,6 +511,10 @@ push occurred.
    direct official-action retrieval, and GitHub-mode rollback with Bitwarden
    unavailable to that run. Include deliberate empty/multiline cases supported by
    the agreed contract. Do not use production credentials, email, or deployments.
+   The canary found that the selected service rejects a present-empty create after
+   earlier synthetic writes. Reject empty upload values before adapter credential
+   access and retain empty-value recovery coverage only for values the service can
+   actually return.
 3. Record only verifiable run IDs/URLs, selected modes, outcomes, and safe probe
    conclusions. Verify remote effects by reading the exact target. If canary access
    is unavailable, keep this phase incomplete and state the blocker; mocked tests
@@ -525,6 +529,25 @@ push occurred.
 
 **Verification gate:** `make verify` exits 0; documented opt-in live canary proves
 Bitwarden delivery and independent GitHub rollback.
+
+**Current execution condition:** `make verify` passed with 303 Python tests and
+82 Node record-validator tests. The approved canary connection, credential,
+Bitwarden project, and GitHub repository are ready. The selected private adapter
+checkout now supplies the complete API-version-1 interface. The next evidence is
+an exact-project resolution from the disposable target checkout, followed by the
+approved synthetic upload, recovery, publication, provider delivery, and GitHub
+rollback probes. No live outcome is recorded until every exact target is read
+back successfully.
+
+**Canary evidence:** Exact project resolution succeeded for the selected
+connection and approved project. No managed value was read or written by this
+preflight.
+
+The value-free upload preview selected four synthetic managed keys. The applied
+batch returned the required partial-failure result. A fresh preview found three
+existing keys eligible for explicit updates and one remaining create for the
+present-empty declaration. Remote state may have changed; do not retry apply
+until the empty-value failure is diagnosed from a fresh, synthetic probe.
 
 ## Out of scope
 
@@ -545,7 +568,7 @@ Bitwarden delivery and independent GitHub rollback.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phases 1–6 complete and Phase 7 pending.
+package. The phase table records Phases 1–6 complete and Phase 7 in progress.
 CAP-001–CAP-004, CAP-006, and CAP-008, root/child DOX, README,
 architecture, security, and design decisions describe the implemented local
 connection, project, environment recovery/upload, standby publication, generated

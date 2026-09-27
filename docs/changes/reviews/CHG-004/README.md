@@ -118,12 +118,10 @@ behind [v3.0.1][action-release]. The [help page][action-help] still demonstrates
 [GitHub Secrets documentation][github-secrets] and [variable contexts][github-contexts]
 state that unset references evaluate to an empty string. A presence/type listing
 cannot prove Secret contents, and a runtime expression alone cannot distinguish
-missing from stored-empty. No live test of storing empty GitHub or Bitwarden
-values was performed.
-
-Proposed conservative boundary: preserve present-empty for local/BWS operations
-only if the official-client probe and later live canary establish support; reject
-empty selected values for reversible Actions publication/delivery. Require every
+missing from stored-empty. Present-empty local values remain representable, but
+Bitwarden upload rejects them before credential access because the approved
+canary service rejected an empty create after partial synthetic writes. Reversible
+Actions publication/delivery also rejects empty selected values. Require every
 selected CI consumer value to be nonempty before execution, without per-key
 provider fallback. This prevents missing outputs being silently treated as valid
 empty configuration. Do not infer requiredness from example values.

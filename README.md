@@ -285,6 +285,10 @@ operation because the named connection is authoritative. A valid renamed origin
 is revalidated for the current invocation; no hidden repository/project binding
 cache exists. Success prints the selected UUID and connection name. Adapter
 stdout, stderr, raw errors, access tokens, and project listings are not relayed.
+For a fresh machine or clone, independently provision an authorized operator
+credential and the matching named connection, then supply the project UUID.
+Repository contents and an existing UUID mapping do not grant access; renames
+or replacement IDs require explicit reconciliation rather than name fallback.
 
 ### Upload a declared dotenv to Bitwarden
 
@@ -415,7 +419,8 @@ revisions, operations, and verification limits, never values or value hashes.
 This metadata is not rollback proof. For a rotation, preview and apply the
 refresh, run a safe workflow or authentication probe against the GitHub-backed
 configuration, and only then treat the standby copy as usable. Keep the previous
-working values until that probe succeeds.
+working values until that probe succeeds. Removing GitHub standby copies
+forfeits immediate rollback during a Bitwarden outage.
 
 ### Generate an explicit dual-provider workflow block
 
@@ -486,6 +491,9 @@ aliases, the pin and region, required-output checks, equal consumer commands,
 the dispatch input shape, bootstrap-token placement, and submodule ordering.
 Because this is a line-based offline check, it does not execute GitHub expressions
 or prove a live runner/action result.
+Regenerate the fragment after a Bitwarden entry is deleted/recreated or its UUID
+changes, review the diff, and rerun `workflow check`. A stale UUID must fail
+the Bitwarden branch; it is never rebound by name or replaced with a GitHub value.
 
 ## Project environment archive
 

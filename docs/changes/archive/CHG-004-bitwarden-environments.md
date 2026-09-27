@@ -1,6 +1,6 @@
 # CHG-004 — Bitwarden environments and reversible Actions delivery
 
-**Status:** blocked
+**Status:** done
 **External request:** Direct operator request: Apply the result in ../../rb/gh-vault/ using the ../../rb/gh-vault/skills/software-development/phased-plan-design/
 **Impacts:** CAP-001, CAP-002, CAP-003, CAP-004, CAP-006, CAP-008
 **Baseline:** `70562afa934e2c713d3d77003d365c76ef4138dd` (0.3.0)
@@ -19,9 +19,9 @@ accounts, operator-level region configuration, optional local encrypted token
 storage, and an explicit project ID for the initial scope instead of incomplete
 project-name listing or a mandatory repository TOML binding file.
 
-This record is the sole phased plan, not a claim of fully implemented support.
-Phases 1–6 are complete at verified checkpoints. Phase 7 remains pending, and
-the record is blocked between phases until another execution cycle is selected.
+This record is the implementation receipt for the explicit Bitwarden extension.
+All seven phases passed their gates; current behavior belongs to the affected
+CAPs and code, not this record.
 No commit, push, release, live credential access, or remote write is authorized
 by this plan.
 
@@ -230,7 +230,7 @@ DOX, README/security contracts where applicable, and this record together.
 | 4 | Explicit upload to Bitwarden | done (55 focused tests; `make verify`: 275 Python tests, 82 Node tests, record validation) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_environments.py tests/test_bitwarden_connection.py` exits 0; `make records-check` exits 0 |
 | 5 | Publish GitHub standby values | done (206 focused tests; record validation; `make verify`: 287 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_vault_features.py tests/test_cli.py` exits 0; `make records-check` exits 0 |
 | 6 | Dual-provider Actions and offline diagnostics | done (36 focused tests; record validation; `make verify`: 303 Python tests and 82 Node tests) | `uv run --no-project --with pytest python -m pytest tests/test_bitwarden_actions.py tests/test_capability_boundaries.py` exits 0; `make records-check` exits 0 |
-| 7 | Integrate recovery evidence and current-state records | in-progress | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
+| 7 | Integrate recovery evidence and current-state records | done (`make verify`: 303 Python tests, 82 Node tests; three successful live canary dispatches; temporary workflow removed) | `make verify` exits 0; documented opt-in live canary proves Bitwarden delivery and independent GitHub rollback |
 
 ## Phase 1 — Resolve integration contracts and approval
 
@@ -530,14 +530,19 @@ push occurred.
 **Verification gate:** `make verify` exits 0; documented opt-in live canary proves
 Bitwarden delivery and independent GitHub rollback.
 
-**Current execution condition:** `make verify` passed with 303 Python tests and
-82 Node record-validator tests. The approved canary connection, credential,
-Bitwarden project, and GitHub repository are ready. The selected private adapter
-checkout now supplies the complete API-version-1 interface. The next evidence is
-an exact-project resolution from the disposable target checkout, followed by the
-approved synthetic upload, recovery, publication, provider delivery, and GitHub
-rollback probes. No live outcome is recorded until every exact target is read
-back successfully.
+**Completion evidence:** `make verify` passes with 303 Python tests and
+82 Node record-validator tests. The approved synthetic project and
+`forgegod/gh-vault-bws` repository are the canary targets; the operator confirmed
+this private adapter repository may be used for the synthetic Actions probe.
+The repository's Actions API lists `BWS_ACCESS_TOKEN` as a repository Secret;
+its contents and project restrictions are not inspectable. The operator
+authorized a temporary canary workflow commit/push and its removal commit/push.
+All three manual canary runs passed. The temporary workflow was removed by
+`c535170f9ef5ce9e78dab3126395bef5397cf7af`; the remote main tree no longer
+contains it, and the private credential-free CI gate passed after removal.
+The synthetic project entries, GitHub standby values, and CI credential remain
+in their approved targets; their deletion was not authorized. These probes did
+not induce a real Bitwarden service outage or prove production rollback readiness.
 
 **Canary evidence:** Exact project resolution succeeded for the selected
 connection and approved project. No managed value was read or written by this
@@ -546,8 +551,39 @@ preflight.
 The value-free upload preview selected four synthetic managed keys. The applied
 batch returned the required partial-failure result. A fresh preview found three
 existing keys eligible for explicit updates and one remaining create for the
-present-empty declaration. Remote state may have changed; do not retry apply
-until the empty-value failure is diagnosed from a fresh, synthetic probe.
+present-empty declaration. The service rejected that empty create; upload now
+rejects it before credential access. A new preview without the empty key found
+the three existing canary entries. An explicitly authorized update applied all
+three, and a separate fresh checkout restored them with exact synthetic values,
+including multiline content, into a private mode-`0600` dotenv; its local-only
+assignment was not restored. This verifies only those canary keys in the selected
+Bitwarden project, not general live-service compatibility.
+
+Publication to [the approved GitHub repository](https://github.com/forgegod/gh-vault-bws)
+previewed three creates, then applied one Variable and two Secrets. An independent
+exact-target API read verified the Variable name/value and both Secret names;
+GitHub does not expose Secret contents. The value-free dual-provider fragment
+was generated from inspected IDs with the `eu` region. Publication metadata and
+read-backs alone do not prove rollback readiness.
+
+The temporary workflow at commit `64dc839c8146abffaab8651c35cf9ae9463c0b02`
+passed the offline `gh-vault workflow check`, YAML parse, private adapter tests,
+and record gates before its authorized push. The [Bitwarden dispatch][bws-run]
+completed with the official action, required-output check, and synthetic
+consumer all successful; the GitHub-only steps were skipped. The explicit
+[GitHub dispatch][github-run] completed with the Bitwarden action and its
+consumer skipped, and the same synthetic consumer succeeded from published
+GitHub values. The [repository-default dispatch][default-run] also selected
+GitHub while `CONFIG_SOURCE` was unset and succeeded with Bitwarden retrieval
+skipped. Each selected consumer asserted nonempty secrets and a multiline value
+without emitting their contents. These are live canary runs of two independent
+branches, not Secret-content read-back, credential-scope inspection, or an
+induced service outage. The GitHub branch made no Bitwarden request, so its
+canary delivery did not depend on Bitwarden availability for that run.
+
+[bws-run]: https://github.com/forgegod/gh-vault-bws/actions/runs/36314358020
+[github-run]: https://github.com/forgegod/gh-vault-bws/actions/runs/36314424557
+[default-run]: https://github.com/forgegod/gh-vault-bws/actions/runs/36314461727
 
 ## Out of scope
 
@@ -568,13 +604,14 @@ until the empty-value failure is diagnosed from a fresh, synthetic probe.
 ## Sources and handoff
 
 Phase 1 evidence and operator decisions are recorded above and in the review
-package. The phase table records Phases 1–6 complete and Phase 7 in progress.
+package. The phase table records all seven phases complete.
 CAP-001–CAP-004, CAP-006, and CAP-008, root/child DOX, README,
 architecture, security, and design decisions describe the implemented local
 connection, project, environment recovery/upload, standby publication, generated
 dual-provider workflow, and offline diagnostic boundaries. They do not claim
-live service behavior, rollback readiness, or SDK implementation in this
-repository.
+general live service behavior, production rollback readiness, or SDK
+implementation in this repository. The bounded canary outcomes are recorded
+in Phase 7 above.
 
 Public references inform the concept; recheck supported versions in Phase 1:
 
@@ -584,8 +621,3 @@ Public references inform the concept; recheck supported versions in Phase 1:
 - [Secrets Manager SDK](https://bitwarden.com/help/secrets-manager-sdk/)
 - [GitHub Actions integration](https://bitwarden.com/help/github-actions-integration/)
 - [Official action source and inputs](https://github.com/bitwarden/sm-action)
-
-Resume with the repository-local
-[phased-plan-execution](../../../skills/software-development/phased-plan-execution/SKILL.md)
-and this record. Phase 6 is complete and the record is blocked between phases;
-select Phase 7 in a new execution cycle before changing its implementation scope.

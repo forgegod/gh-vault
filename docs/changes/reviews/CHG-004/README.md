@@ -1,7 +1,7 @@
 # CHG-004 — Bitwarden integration review
 
 **Status:** review-only
-**Owner:** [CHG-004](../../active/CHG-004-bitwarden-environments.md)
+**Owner:** [CHG-004](../../archive/CHG-004-bitwarden-environments.md)
 
 This package contains upstream findings and a proposed contract, not implemented
 behavior or a second progress tracker. The owning CHG records progress; current

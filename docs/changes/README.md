@@ -69,10 +69,11 @@ than a profile-private plan.
 
 ## Current records
 
-- [CHG-004 — Bitwarden environments and reversible Actions delivery](active/CHG-004-bitwarden-environments.md) — blocked between phases; Phase 6 completed generated dual-provider workflow integration and offline diagnostics; Phase 7 live canary/integration remains pending.
+No active records.
 
 ## Archive
 
+- [CHG-004 — Bitwarden environments and reversible Actions delivery](archive/CHG-004-bitwarden-environments.md) — done; bounded live synthetic recovery, standby publication, and two-provider Actions canary receipt.
 - [CHG-001 — Adopt source-backed maintenance records](archive/CHG-001-maintenance-adoption.md) — done; source-backed adoption and local verification receipt.
 - [CHG-002 — Install the short console command](archive/CHG-002-local-console-command.md) — done; `gh-vault` console-script installation while retaining the `forgegod-gh-vault` distribution.
 - [CHG-003 — Environment-scoped GitHub Actions values](archive/CHG-003-environment-scoped-actions-values.md) — done; explicit repository or GitHub Environment scope for remote Actions values.

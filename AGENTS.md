@@ -78,6 +78,7 @@ Default section order:
 
 - Documentation describes the current project state only; git carries the timeline and retired designs.
 - Keep documentation concise and cross-reference owning docs rather than duplicating them.
+- Private adapter installation and update recipes belong to the `gh-vault-bws` README. Public docs describe the adapter interface/location and refer to that setup; ordinary usage uses one `gh-vault` command on `PATH`.
 - Use explicit markers such as `@file:` rather than inferring file-path intent.
 - Use synthetic fixtures, never operator credentials or real project environments, for verification.
 - Local-commit checks are offline. Remote `secret sync --dry-run` / `secret check` and the matching variable commands belong to pre-push review when their declarations change, not to ordinary local tests.

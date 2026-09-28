@@ -57,6 +57,11 @@ uv tool install forgegod-gh-vault
 
 This installs the `forgegod-gh-vault` distribution and provides `gh-vault` on your `PATH`. `python -m gh_vault` is the equivalent module entry point.
 
+For the private Bitwarden adapter, follow the **Installation** section in your
+authorized `gh-vault-bws` checkout instead. It documents one combined installation
+that provides the same `gh-vault` command; private dependency setup and updates
+are owned by that repository.
+
 Releases are tag-driven via GitHub Actions trusted publishing. The full setup checklist, environment rules, and tag conventions live in [`docs/RELEASING.md`](docs/RELEASING.md). In short: bump `gh_vault.__version__`, commit, push a `v<version>` tag — nothing else publishes.
 
 ## Development installation
@@ -246,22 +251,12 @@ Bitwarden commands use this private checkout by default:
 ${XDG_DATA_HOME:-~/.local/share}/gh-vault/adapters/gh-vault-bws
 ```
 
-Create its parent directory privately, then clone the operator-provided private
-repository there. Substitute the approved clone URL; gh-vault never runs these
-commands or updates the checkout.
-
-```sh
-adapter_root="${XDG_DATA_HOME:-$HOME/.local/share}/gh-vault/adapters"
-install -d -m 700 "$adapter_root"
-git clone git@github.com:OWNER/gh-vault-bws.git "$adapter_root/gh-vault-bws"
-```
-
 The checkout root must contain `gh_vault_bws/__init__.py` implementing adapter
-API version 1. Follow the private adapter repository's documented runtime setup
-and invoke Bitwarden commands through that private environment's `gh-vault`
-executable; a separately installed global `gh-vault` cannot import the adapter's
-private dependency. Use `--adapter-path /private/other/checkout` to override
-the default for one command.
+API version 1. Obtain and set it up using the private `gh-vault-bws` README's
+**Installation** section, then use the normal `gh-vault` command for both standard
+and Bitwarden operations. No checkout-specific executable path is required.
+Use `--adapter-path /private/other/checkout` to override the default for one
+command. gh-vault never fetches, installs, or updates the checkout.
 
 Create a named connection from an existing bws profile. The default bws config is
 `~/.config/bws/config`; use `--bws-config` to select another file. The profile

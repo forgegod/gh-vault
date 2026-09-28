@@ -257,9 +257,11 @@ git clone git@github.com:OWNER/gh-vault-bws.git "$adapter_root/gh-vault-bws"
 ```
 
 The checkout root must contain `gh_vault_bws/__init__.py` implementing adapter
-API version 1. Follow the private adapter repository's own dependency setup
-instructions. Use `--adapter-path /private/other/checkout` to override the
-default for one command.
+API version 1. Follow the private adapter repository's documented runtime setup
+and invoke Bitwarden commands through that private environment's `gh-vault`
+executable; a separately installed global `gh-vault` cannot import the adapter's
+private dependency. Use `--adapter-path /private/other/checkout` to override
+the default for one command.
 
 Create a named connection from an existing bws profile. The default bws config is
 `~/.config/bws/config`; use `--bws-config` to select another file. The profile
